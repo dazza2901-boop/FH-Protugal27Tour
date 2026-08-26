@@ -52,7 +52,7 @@ const ScoreboardPage = (() => {
     _unsubs.forEach(u => u());
     _unsubs = [];
 
-    _unsubs.push(DB.on('players',  d => { _players  = d || {}; refreshAll(); }));
+    _unsubs.push(DB.on('players',  d => { _players  = d || {}; TeamsPage.syncSlots(); refreshAll(); }));
     _unsubs.push(DB.on('teams',    d => { _teams    = d || {}; refreshAll(); }));
     _unsubs.push(DB.on('schedule', d => { _schedule = d || {}; refreshAll(); }));
     _unsubs.push(DB.on('courses',  d => { _courses  = d || {}; refreshAll(); }));

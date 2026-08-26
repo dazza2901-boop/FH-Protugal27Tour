@@ -112,6 +112,20 @@ const ScorecardPage = (() => {
     });
   }
 
+  // Resolve a stored group (may have .slots or legacy .playerIds) to live playerIds
+  function resolveGroup(g) {
+    if (!g) return { playerIds: [] };
+    if (g.slots && g.slots.length > 0) {
+      const sorted = Object.entries(_players)
+        .sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99));
+      const playerIds = g.slots
+        .map(slot => sorted[slot - 1]?.[0])
+        .filter(Boolean);
+      return { ...g, playerIds };
+    }
+    return g; // legacy: already has playerIds
+  }
+
   function populateGroupSelect(day) {
     const sel = document.getElementById('sc-group-select');
     if (!sel) return;
@@ -124,12 +138,15 @@ const ScorecardPage = (() => {
     }
     sel.innerHTML = `<option value="">— Select group —</option>` +
       groups.map((g, i) => {
-        const names = (g.playerIds || []).map(pid => _players[pid]?.name || '?').join(', ');
-        return `<option value="${i}">Group ${i + 1}: ${names}</option>`;
+        const resolved = resolveGroup(g);
+        const label = g.slots
+          ? `Group ${i + 1}: Players ${g.slots.join(', ')}`
+          : `Group ${i + 1}: ${resolved.playerIds.map(pid => _players[pid]?.name || '?').join(', ')}`;
+        return `<option value="${i}">${label}</option>`;
       }).join('');
     if (groups.length === 1) {
       sel.value = '0';
-      _currentGroup = groups[0];
+      _currentGroup = resolveGroup(groups[0]);
       buildGrid();
     }
   }
@@ -143,7 +160,8 @@ const ScorecardPage = (() => {
     }
     DB.get(`schedule/day${_currentDay}`).then(day => {
       const groups = day?.groupings || [];
-      _currentGroup = groups[parseInt(idx)] || { playerIds: Object.keys(_players) };
+      const g = groups[parseInt(idx)] || { playerIds: Object.keys(_players) };
+      _currentGroup = resolveGroup(g);
       buildGrid();
     });
   }

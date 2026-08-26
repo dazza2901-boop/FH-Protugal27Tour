@@ -12,12 +12,19 @@
 // ============================================================
 
 const firebaseConfig = {
+
   apiKey: "AIzaSyAVHdbxgkFJEjIoMN0Rpe7Hh87Muar6fLk",
+
   authDomain: "fh-portugal2027tour.firebaseapp.com",
+
   databaseURL: "https://fh-portugal2027tour-default-rtdb.firebaseio.com",
+
   projectId: "fh-portugal2027tour",
+
   storageBucket: "fh-portugal2027tour.firebasestorage.app",
+
   messagingSenderId: "484165166128",
+
   appId: "1:484165166128:web:e9c663b4f67ac6b2cc79f5"
 
 };

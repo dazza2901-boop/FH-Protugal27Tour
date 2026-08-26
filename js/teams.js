@@ -1,5 +1,14 @@
 // ============================================================
 //  teams.js  —  Team allocation page (3 teams of 4)
+//
+//  Slot system:
+//    Players are ranked 1–12 by handicap (lowest = 1).
+//    Team A = slots 1, 4, 9, 10
+//    Team B = slots 2, 6, 7, 12
+//    Team C = slots 3, 5, 8, 11
+//  Auto-Assign rewrites team membership based on current handicaps.
+//  Slot numbers are shown on every member chip so admin can see
+//  who is in which slot at a glance.
 // ============================================================
 
 const TeamsPage = (() => {
@@ -10,36 +19,71 @@ const TeamsPage = (() => {
     { name: 'Team Par',    color: '#2e86ab' }
   ];
 
+  // Fixed slot → team index mapping (0-based team index)
+  // Slot 1 = lowest handicap, slot 12 = highest handicap
+  const SLOT_TEAM = {
+    1: 0,  4: 0,  9: 0, 10: 0,   // Team A
+    2: 1,  6: 1,  7: 1, 12: 1,   // Team B
+    3: 2,  5: 2,  8: 2, 11: 2    // Team C
+  };
+  const TEAM_SLOTS = [
+    [1, 4, 9, 10],   // Team A
+    [2, 6, 7, 12],   // Team B
+    [3, 5, 8, 11]    // Team C
+  ];
+
   let _teams   = {};
   let _players = {};
   let _unsub   = null;
   let _unsubP  = null;
   let _isAdmin = false;
 
-  // ── Render ──────────────────────────────────────────────
+  // ── Slot helpers ─────────────────────────────────────────
+  // Returns array of {pid, slot} sorted by handicap asc (slot 1 = best)
+  function computeSlots() {
+    return Object.entries(_players)
+      .sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99))
+      .map(([pid], i) => ({ pid, slot: i + 1 }));
+  }
+
+  function slotOf(pid) {
+    const entry = computeSlots().find(s => s.pid === pid);
+    return entry ? entry.slot : null;
+  }
+
+  // ── Render ───────────────────────────────────────────────
   async function render(container, isAdmin) {
     _isAdmin = isAdmin;
     container.innerHTML = `<div class="page">
       <div class="flex-between mt-8">
         <span class="section-title">🏌️ Teams</span>
-        ${isAdmin ? `<button class="btn-primary btn-sm" id="auto-assign-btn">Auto-Assign</button>` : ''}
+        ${isAdmin ? `<button class="btn-primary btn-sm" id="auto-assign-btn">⚡ Auto-Assign by Handicap</button>` : ''}
       </div>
-      <div id="teams-container" class="mt-12"></div>
-      ${isAdmin ? `<div id="unassigned-card" class="card">
-        <div class="card-header"><span class="card-title">Unassigned Players</span></div>
-        <div id="unassigned-list"></div>
+
+      ${isAdmin ? `
+      <div class="card" style="margin-top:12px;padding:12px 16px;background:#f7f8fa;border:1px solid #e5e7eb">
+        <div style="font-size:0.82rem;font-weight:700;color:#1a2332;margin-bottom:8px">📋 Slot System</div>
+        <div style="font-size:0.78rem;color:#57606a;margin-bottom:8px">
+          Players are ranked 1–12 by handicap (lowest = Slot 1). Slots are fixed to teams. When handicaps change, hit <strong>Auto-Assign</strong> to rebuild.
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:0.78rem">
+          <span style="padding:3px 10px;border-radius:12px;background:#c8a80022;border:1px solid #c8a800;color:#8a7000;font-weight:600">Team A — Slots 1, 4, 9, 10</span>
+          <span style="padding:3px 10px;border-radius:12px;background:#1a5c2a22;border:1px solid #1a5c2a;color:#1a5c2a;font-weight:600">Team B — Slots 2, 6, 7, 12</span>
+          <span style="padding:3px 10px;border-radius:12px;background:#2e86ab22;border:1px solid #2e86ab;color:#1a5980;font-weight:600">Team C — Slots 3, 5, 8, 11</span>
+        </div>
       </div>` : ''}
+
+      <div id="slot-rank-table" class="card mt-12" style="overflow-x:auto"></div>
+      <div id="teams-container" class="mt-12"></div>
     </div>`;
 
     if (isAdmin) {
       document.getElementById('auto-assign-btn').onclick = autoAssign;
     }
 
-    // Subscribe to both players and teams
     if (_unsub)  _unsub();
     if (_unsubP) _unsubP();
-
-    _unsubP = DB.on('players', d => { _players = d || {}; renderAll(); });
+    _unsubP = DB.on('players', d => { _players = d || {}; renderAll(); scheduleSync(); });
     _unsub  = DB.on('teams',   d => { _teams   = d || {}; renderAll(); });
 
     // Seed default teams if none exist
@@ -47,22 +91,54 @@ const TeamsPage = (() => {
     if (!existing) {
       const batch = {};
       for (const t of DEFAULT_TEAMS) {
-        const key = DB_pushKey();
-        batch[key] = { ...t, playerIds: [] };
+        batch[DB_pushKey()] = { ...t, playerIds: [] };
       }
       await DB.set('teams', batch);
     }
   }
 
+  // ── Debounced sync trigger ────────────────────────────────
+  // Defers sync so both _players and _teams are populated before running.
+  let _syncTimer = null;
+  function scheduleSync() {
+    if (_syncTimer) clearTimeout(_syncTimer);
+    _syncTimer = setTimeout(syncTeamSlots, 200);
+  }
+
+  // ── Auto-sync teams whenever players change ───────────────
+  // Uses _teams directly (populated by the teams listener).
+  // If teams have already been assigned (at least one has playerIds),
+  // silently recompute all playerIds from current handicap ranking.
+  async function syncTeamSlots() {
+    const teamIds = Object.keys(_teams);
+    if (teamIds.length < 3) return;
+    const alreadyAssigned = teamIds.some(tid => (_teams[tid]?.playerIds || []).length > 0);
+    if (!alreadyAssigned) return; // never been assigned yet — don't auto-write
+
+    const slots = computeSlots();
+    const assignment = { [teamIds[0]]: [], [teamIds[1]]: [], [teamIds[2]]: [] };
+    slots.forEach(({ pid, slot }) => {
+      const teamIdx = SLOT_TEAM[slot];
+      if (teamIdx !== undefined) assignment[teamIds[teamIdx]].push(pid);
+    });
+
+    for (const [tid, ids] of Object.entries(assignment)) {
+      // Only write if the membership actually changed
+      const current = JSON.stringify([...((_teams[tid]?.playerIds) || [])].sort());
+      const next    = JSON.stringify([...ids].sort());
+      if (current !== next) {
+        await DB.update(`teams/${tid}`, { playerIds: ids });
+      }
+    }
+  }
+
   function renderAll() {
+    renderSlotTable();
     renderTeams();
-    if (_isAdmin) renderUnassigned();
-    // Inject teamName into players for display elsewhere
     injectTeamNames();
   }
 
   function injectTeamNames() {
-    // Attach teamName + teamColor to player data in memory (not persisted separately)
     Object.entries(_teams).forEach(([tid, team]) => {
       (team.playerIds || []).forEach(pid => {
         if (_players[pid]) {
@@ -74,6 +150,57 @@ const TeamsPage = (() => {
     });
   }
 
+  // ── Slot ranking table ───────────────────────────────────
+  function renderSlotTable() {
+    const el = document.getElementById('slot-rank-table');
+    if (!el) return;
+
+    const slots = computeSlots();
+    const teamEntries = Object.entries(_teams);
+
+    if (slots.length === 0) {
+      el.innerHTML = '<p class="center-msg">No players yet.</p>';
+      return;
+    }
+
+    const rows = slots.map(({ pid, slot }) => {
+      const p    = _players[pid];
+      const teamIdx = (SLOT_TEAM[slot] ?? -1);
+      const team    = teamEntries[teamIdx]?.[1];
+      const color   = team?.color || '#ccc';
+      const tname   = team?.name  || '—';
+      return `<tr>
+        <td style="padding:7px 10px;font-weight:700;color:#1a2332;font-size:0.95rem">
+          <span style="display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;
+            border-radius:50%;background:#1c1c1e;color:#fff;font-size:0.75rem;font-weight:700;margin-right:6px">${slot}</span>
+        </td>
+        <td style="padding:7px 10px;font-weight:600">${p.name}</td>
+        <td style="padding:7px 10px;text-align:center;color:#57606a">${p.handicap ?? '—'}</td>
+        <td style="padding:7px 10px">
+          <span style="display:inline-flex;align-items:center;gap:5px">
+            <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0"></span>
+            <span style="font-size:0.82rem;font-weight:600;color:#1a2332">${tname}</span>
+          </span>
+        </td>
+      </tr>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div style="font-weight:700;font-size:0.9rem;color:#1a2332;margin-bottom:10px">🏅 Handicap Rankings &amp; Slots</div>
+      <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+        <thead>
+          <tr style="background:#f7f8fa;font-size:0.75rem;color:#57606a">
+            <th style="padding:6px 10px;text-align:left;border-bottom:1px solid #e5e7eb">Slot</th>
+            <th style="padding:6px 10px;text-align:left;border-bottom:1px solid #e5e7eb">Player</th>
+            <th style="padding:6px 10px;text-align:center;border-bottom:1px solid #e5e7eb">HCP</th>
+            <th style="padding:6px 10px;text-align:left;border-bottom:1px solid #e5e7eb">Team</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  // ── Teams display ────────────────────────────────────────
   function renderTeams() {
     const container = document.getElementById('teams-container');
     if (!container) return;
@@ -82,13 +209,15 @@ const TeamsPage = (() => {
       container.innerHTML = '<p class="center-msg">No teams set up yet.</p>';
       return;
     }
-    container.innerHTML = teamEntries.map(([tid, team]) => {
+
+    container.innerHTML = teamEntries.map(([tid, team], tIdx) => {
       const members = (team.playerIds || [])
         .filter(pid => _players[pid])
         .sort((a, b) => (_players[a]?.handicap ?? 99) - (_players[b]?.handicap ?? 99))
-        .map(pid => _players[pid]);
+        .map(pid => ({ pid, player: _players[pid], slot: slotOf(pid) }));
+
       return `
-        <div class="card team-card" style="border-left: 4px solid ${team.color}">
+        <div class="card team-card" style="border-left:4px solid ${team.color}">
           <div class="team-header">
             <div class="team-badge" style="background:${team.color}">${members.length}/4</div>
             ${_isAdmin
@@ -97,97 +226,52 @@ const TeamsPage = (() => {
                    onchange="TeamsPage.renameTeam('${tid}', this.value)" />`
               : `<span class="team-name">${team.name}</span>`}
             <span class="tag" style="background:${team.color}20;color:${team.color}">
-              ${members.length} player${members.length !== 1 ? 's' : ''}
+              Slots ${TEAM_SLOTS[tIdx]?.join(', ') || '—'}
             </span>
           </div>
           <div class="team-members">
             ${members.length === 0
-              ? '<span class="text-muted">No players assigned</span>'
-              : members.map(p => `
-                <span class="team-member-chip">
+              ? '<span class="text-muted">No players assigned — hit Auto-Assign</span>'
+              : members.map(({ pid, player: p, slot }) => `
+                <span class="team-member-chip" style="display:inline-flex;align-items:center;gap:4px">
+                  <span style="display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;
+                    border-radius:50%;background:#1c1c1e;color:#fff;font-size:0.65rem;font-weight:700;flex-shrink:0">${slot ?? '?'}</span>
                   ${p.name}${p.handicap != null ? ` <span class="text-muted">(${p.handicap})</span>` : ''}
-                  ${_isAdmin ? `<button style="background:none;border:none;cursor:pointer;color:#d93025;margin-left:4px"
-                    onclick="TeamsPage.removeFromTeam('${tid}','${Object.keys(_players).find(k => _players[k] === p)}')">✕</button>` : ''}
                 </span>`).join('')}
           </div>
         </div>`;
     }).join('');
   }
 
-  function renderUnassigned() {
-    const list = document.getElementById('unassigned-list');
-    if (!list) return;
-    const assignedIds = new Set(
-      Object.values(_teams).flatMap(t => t.playerIds || [])
-    );
-    const unassigned = Object.entries(_players).filter(([id]) => !assignedIds.has(id));
-
-    if (unassigned.length === 0) {
-      list.innerHTML = '<p class="text-muted" style="padding:8px 0">All players assigned ✓</p>';
-      return;
-    }
-
-    const teamOptions = Object.entries(_teams)
-      .map(([tid, t]) => `<option value="${tid}">${t.name}</option>`).join('');
-
-    list.innerHTML = unassigned.map(([pid, p]) => `
-      <div class="player-item">
-        <div class="player-avatar" style="background:${PlayersPage.COLORS[Object.keys(_players).indexOf(pid) % PlayersPage.COLORS.length]}">${PlayersPage.initials(p.name)}</div>
-        <div class="player-info">
-          <div class="player-name">${p.name}</div>
-          <div class="player-meta">HCP: ${p.handicap ?? '—'}</div>
-        </div>
-        <select id="assign-${pid}" style="padding:6px;border-radius:6px;border:1.5px solid #d0d7de;font-size:0.82rem">
-          <option value="">Assign to…</option>
-          ${teamOptions}
-        </select>
-        <button class="btn-primary btn-sm" onclick="TeamsPage.assignPlayer('${pid}')">Add</button>
-      </div>`).join('');
-  }
-
-  // ── Actions ──────────────────────────────────────────────
-  async function assignPlayer(pid) {
-    const sel = document.getElementById(`assign-${pid}`);
-    const tid = sel?.value;
-    if (!tid) { App.toast('Select a team first'); return; }
-
-    const team = _teams[tid];
-    const ids  = [...(team.playerIds || [])];
-    if (ids.includes(pid)) { App.toast('Already in that team'); return; }
-    if (ids.length >= 4)   { App.toast('Team already has 4 players'); return; }
-    ids.push(pid);
-    await DB.update(`teams/${tid}`, { playerIds: ids });
-    App.toast(`Added to ${team.name}`);
-  }
-
-  async function removeFromTeam(tid, pid) {
-    const team = _teams[tid];
-    const ids  = (team.playerIds || []).filter(id => id !== pid);
-    await DB.update(`teams/${tid}`, { playerIds: ids });
-    App.toast('Player removed from team');
-  }
-
-  async function renameTeam(tid, name) {
-    await DB.update(`teams/${tid}`, { name });
-  }
-
+  // ── Auto-assign by handicap slots ────────────────────────
   async function autoAssign() {
-    const playerIds = Object.keys(_players);
-    if (playerIds.length < 1) { App.toast('No players to assign'); return; }
-    // Sort by handicap ascending, then distribute round-robin across teams
-    const sorted = [...playerIds].sort((a, b) =>
-      (_players[a].handicap || 0) - (_players[b].handicap || 0)
-    );
+    const playerCount = Object.keys(_players).length;
+    if (playerCount < 1) { App.toast('No players to assign'); return; }
+    if (playerCount > 12) { App.toast('More than 12 players — please remove extras first'); return; }
+
     const teamIds = Object.keys(_teams);
+    if (teamIds.length < 3) { App.toast('Need 3 teams to auto-assign'); return; }
+
+    const slots = computeSlots(); // [{pid, slot}] sorted by handicap
+
+    // Build new playerIds per team using fixed slot→team mapping
     const assignment = { [teamIds[0]]: [], [teamIds[1]]: [], [teamIds[2]]: [] };
-    sorted.forEach((pid, i) => {
-      const tid = teamIds[i % teamIds.length];
-      assignment[tid].push(pid);
+    slots.forEach(({ pid, slot }) => {
+      const teamIdx = SLOT_TEAM[slot];
+      if (teamIdx !== undefined) {
+        assignment[teamIds[teamIdx]].push(pid);
+      }
     });
+
     for (const [tid, ids] of Object.entries(assignment)) {
       await DB.update(`teams/${tid}`, { playerIds: ids });
     }
-    App.toast('Players auto-assigned by handicap');
+    App.toast('Teams auto-assigned by handicap slots ✓');
+  }
+
+  // ── Other actions ────────────────────────────────────────
+  async function renameTeam(tid, name) {
+    await DB.update(`teams/${tid}`, { name });
   }
 
   function destroy() {
@@ -197,11 +281,11 @@ const TeamsPage = (() => {
 
   function getTeams()   { return _teams; }
   function getPlayers() { return _players; }
+  function getSlots()   { return computeSlots(); }
 
-  // ── Helper: generate a Firebase-style push key client-side ─
   function DB_pushKey() {
     return Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
   }
 
-  return { render, destroy, assignPlayer, removeFromTeam, renameTeam, autoAssign, getTeams, getPlayers };
+  return { render, destroy, renameTeam, autoAssign, getTeams, getPlayers, getSlots, syncSlots: scheduleSync };
 })();

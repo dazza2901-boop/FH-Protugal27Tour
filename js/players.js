@@ -71,12 +71,24 @@ const PlayersPage = (() => {
       list.innerHTML = '<p class="center-msg">No players yet. Add your first player!</p>';
       return;
     }
-    list.innerHTML = entries.map(([id, p], idx) => `
+    // Compute slot numbers (rank by handicap asc)
+    const sorted = [...entries].sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99));
+    const slotMap = {};
+    sorted.forEach(([id], i) => { slotMap[id] = i + 1; });
+
+    list.innerHTML = entries
+      .sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99))
+      .map(([id, p], idx) => `
       <div class="player-item">
         <div class="player-avatar" style="background:${COLORS[idx % COLORS.length]}">${initials(p.name)}</div>
         <div class="player-info">
-          <div class="player-name">${p.name}${p.nickname ? ` <span class="text-muted">(${p.nickname})</span>` : ''}</div>
-          <div class="player-meta">HCP: ${p.handicap ?? '—'} ${p.teamName ? `· ${p.teamName}` : ''}</div>
+          <div class="player-name">
+            <span style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;
+              border-radius:50%;background:#1c1c1e;color:#fff;font-size:0.65rem;font-weight:700;
+              margin-right:6px;vertical-align:middle;flex-shrink:0">${slotMap[id]}</span>
+            ${p.name}${p.nickname ? ` <span class="text-muted">(${p.nickname})</span>` : ''}
+          </div>
+          <div class="player-meta">HCP: ${p.handicap ?? '—'} ${p._teamName ? `· ${p._teamName}` : ''}</div>
         </div>
         ${isAdmin ? `
         <div class="player-actions">
