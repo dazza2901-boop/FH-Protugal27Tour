@@ -64,6 +64,16 @@ const SchedulePage = (() => {
             <option value="">— No course selected (use defaults) —</option>
           </select>
         </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>🚌 Bus Pickup (hotel)</label>
+            <input type="time" id="de-buspickup" value="08:00" />
+          </div>
+          <div class="form-group">
+            <label>🚌 Return from Course</label>
+            <input type="time" id="de-busreturn" value="16:00" />
+          </div>
+        </div>
         <div class="form-group">
           <label>Scoring Notes (optional)</label>
           <input type="text" id="de-notes" placeholder="e.g. 10 pt for hole-in-one" />
@@ -181,10 +191,14 @@ const SchedulePage = (() => {
             </div>
             <span class="format-badge ${fmtClass}">${fmt}</span>
           </div>
+          ${course ? `<div style="font-size:0.9rem;font-weight:700;color:#1a5c2a;margin-bottom:6px">⛳ ${course.name}</div>` : ''}
+          ${(day.busPickup || day.busReturn) ? `
+          <div style="display:flex;flex-wrap:wrap;gap:12px;margin-bottom:8px;padding:8px 10px;background:#f0f4ff;border-radius:8px;border:1px solid #c9d6f5;font-size:0.82rem">
+            ${day.busPickup ? `<span>🚌 <strong>Pickup:</strong> ${day.busPickup}</span>` : ''}
+            ${day.busReturn ? `<span>🚌 <strong>Return:</strong> ${day.busReturn}</span>` : ''}
+          </div>` : ''}
           <div class="text-muted" style="margin-bottom:${groups.length ? '10px' : '0'}">
-            🕐 First tee: ${day.teeTime || '—'}
-            ${course ? `· <span style="color:#1a5c2a;font-weight:600">⛳ ${course.name}</span>` : ''}
-            ${day.scoringNote ? `· ${day.scoringNote}` : ''}
+            ${day.scoringNote ? `📝 ${day.scoringNote}` : ''}
           </div>
           ${groups.map((g, gi) => {
             const teeMin   = timeToMin(day.teeTime || '08:00') + gi * 10;
@@ -209,10 +223,12 @@ const SchedulePage = (() => {
     _editDay = dayKey;
     const day = _schedule[dayKey] || {};
     document.getElementById('day-editor-title').textContent = `Edit ${dayKey.replace('day','Day ')}`;
-    document.getElementById('de-label').value    = day.label      || `Day ${dayKey.replace('day','')}`;
-    document.getElementById('de-format').value   = day.format     || 'singles';
-    document.getElementById('de-teetime').value  = day.teeTime    || '08:00';
-    document.getElementById('de-notes').value    = day.scoringNote || '';
+    document.getElementById('de-label').value     = day.label       || `Day ${dayKey.replace('day','')}`;
+    document.getElementById('de-format').value    = day.format      || 'singles';
+    document.getElementById('de-teetime').value   = day.teeTime     || '08:00';
+    document.getElementById('de-buspickup').value = day.busPickup   || '';
+    document.getElementById('de-busreturn').value = day.busReturn   || '';
+    document.getElementById('de-notes').value     = day.scoringNote || '';
     populateCourseSelect(day.courseId);
     renderGroupingsEditor(day.groupings || []);
     document.getElementById('day-editor').classList.remove('hidden');
@@ -305,6 +321,8 @@ const SchedulePage = (() => {
     const label       = document.getElementById('de-label').value.trim();
     const format      = document.getElementById('de-format').value;
     const teeTime     = document.getElementById('de-teetime').value;
+    const busPickup   = document.getElementById('de-buspickup').value || null;
+    const busReturn   = document.getElementById('de-busreturn').value || null;
     const scoringNote = document.getElementById('de-notes').value.trim();
     const courseId    = document.getElementById('de-course').value || null;
 
@@ -320,7 +338,7 @@ const SchedulePage = (() => {
       }
     });
 
-    await DB.update(`schedule/${_editDay}`, { label, format, teeTime, scoringNote, courseId, groupings });
+    await DB.update(`schedule/${_editDay}`, { label, format, teeTime, busPickup, busReturn, scoringNote, courseId, groupings });
     App.toast('Day saved ✓');
     closeEditor();
   }

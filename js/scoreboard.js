@@ -296,7 +296,7 @@ const ScoreboardPage = (() => {
         color:   team.color,
         members: (team.playerIds || []).slice()
           .sort((a, b) => (_players[a]?.handicap ?? 99) - (_players[b]?.handicap ?? 99))
-          .map(pid => _players[pid]?.name).filter(Boolean),
+          .map(pid => _players[pid]?.name?.split(' ')[0]).filter(Boolean),
         dayPts:  dayPts[tid],
         ntp,
         bingo,
@@ -343,19 +343,19 @@ const ScoreboardPage = (() => {
       </tr>`;
     }).join('');
 
-    // Points key
+    // Points key — shown below the table, one line per scoring type
     const keyHtml = `
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px;font-size:0.75rem">
-        <span style="padding:2px 8px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:12px"><strong>Team day:</strong> 5 · 3 · 1.5</span>
-        <span style="padding:2px 8px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:12px"><strong>Singles:</strong> 4 · 3.5 · 3 · 2.5 · 2 · 1.5 · 1 · 0.5</span>
-        <span style="padding:2px 8px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:12px"><strong>Pairs:</strong> 4 · 2.5 · 1.5 · 1</span>
-        <span style="padding:2px 8px;background:#fff8e1;border:1px solid #ffe082;border-radius:12px">📍 NTP: +0.5/win</span>
-        <span style="padding:2px 8px;background:#f0fff4;border:1px solid #b2dfdb;border-radius:12px">🎯 Bingo: F9+1 · B9+1 · Both+0.5</span>
-        <span style="padding:2px 8px;background:#f0f4ff;border:1px solid #c9d6f5;border-radius:12px">⚔️ Matchplay: Win+1 · Draw+0.5</span>
+      <div style="margin-top:14px;padding:10px 12px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:8px;font-size:0.78rem;line-height:1.9">
+        <div style="font-weight:700;color:#1a2332;margin-bottom:4px">📊 Scoring Key</div>
+        <div><span style="display:inline-block;min-width:110px;font-weight:600">Team day:</span> 1st 5pts · 2nd 3pts · 3rd 1.5pts</div>
+        <div><span style="display:inline-block;min-width:110px;font-weight:600">Singles:</span> 4 · 3.5 · 3 · 2.5 · 2 · 1.5 · 1 · 0.5</div>
+        <div><span style="display:inline-block;min-width:110px;font-weight:600">Pairs:</span> 4 · 2.5 · 1.5 · 1</div>
+        <div><span style="display:inline-block;min-width:110px;font-weight:600">📍 NTP:</span> +0.5 per win</div>
+        <div><span style="display:inline-block;min-width:110px;font-weight:600">🎯 Birdie Bingo:</span> F9 complete +1 · B9 complete +1 · Both +0.5 bonus</div>
+        <div><span style="display:inline-block;min-width:110px;font-weight:600">⚔️ Matchplay:</span> Win +1 · Draw +0.5</div>
       </div>`;
 
     el.innerHTML = `
-      ${keyHtml}
       <div class="card" style="overflow-x:auto">
         <table class="scoreboard-table">
           <thead><tr>
@@ -369,7 +369,8 @@ const ScoreboardPage = (() => {
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
-      </div>`;
+      </div>
+      ${keyHtml}`;
   }
 
   // ── Teams tab ─────────────────────────────────────────────
@@ -396,7 +397,7 @@ const ScoreboardPage = (() => {
       return { tid, name: team.name, color: team.color, total, dayPts,
                members: (team.playerIds || []).slice()
                  .sort((a, b) => (_players[a]?.handicap ?? 99) - (_players[b]?.handicap ?? 99))
-                 .map(pid => _players[pid]?.name).filter(Boolean) };
+                 .map(pid => _players[pid]?.name?.split(' ')[0]).filter(Boolean) };
     }).sort((a, b) => b.total - a.total);
 
     const dayHeaders = Array.from({length: DAYS}, (_, i) => {
@@ -621,10 +622,6 @@ const ScoreboardPage = (() => {
 
     el.innerHTML = `
       <div class="card" style="overflow-x:auto;padding:10px 8px">
-        <div style="font-size:0.82rem;color:#155724;margin-bottom:10px;padding:4px 6px;background:#f0fff4;border-radius:6px;border:1px solid #b2dfdb">
-          <strong>🎯 Birdie Bingo</strong> — ✓ = net birdie or better by any team member on that hole, across any round.
-          Colour: grey = ticked · orange = half complete · green = all 18 done.
-        </div>
         <table class="bb-table">
           <thead>
             <tr>
@@ -742,11 +739,7 @@ const ScoreboardPage = (() => {
       </div>`;
     }).join('');
 
-    el.innerHTML = `
-      <div style="font-size:0.82rem;color:#57606a;margin-bottom:10px;padding:6px 10px;background:#fff8e1;border-radius:6px;border:1px solid #ffe082">
-        📍 <strong>Nearest the Pin</strong> — one winner per par 3 per day. Select winners from the dropdowns below.
-      </div>
-      ${dayCards}`;
+    el.innerHTML = dayCards;
   }
 
   // ── Save NTP winners for a whole day card ────────────────
