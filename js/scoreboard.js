@@ -59,7 +59,7 @@ const ScoreboardPage = (() => {
     _unsubs.push(DB.on('schedule', d => { _schedule = d || {}; refreshAll(); }));
     _unsubs.push(DB.on('courses',  d => { _courses  = d || {}; refreshAll(); }));
     _unsubs.push(DB.on('config',   d => { _config   = d || {}; refreshAll(); }));
-    _unsubs.push(DB.on('ntp',      d => { _ntp      = d || {}; renderNTP();  }));
+    _unsubs.push(DB.on('ntp',      d => { _ntp      = d || {}; refreshAll();  }));
 
     for (let d = 1; d <= DAYS; d++) {
       const day = d;
@@ -1283,11 +1283,12 @@ const ScoreboardPage = (() => {
         return `<td style="text-align:right;color:${lost > 0 ? '#b91c1c' : '#57606a'}">${lost > 0 ? lost : '<span class="text-muted">0</span>'}</td>`;
       }).join('');
       const dot = s.teamColor ? `<span class="team-color-dot" style="background:${s.teamColor}"></span>` : '';
+      const badgeCls = pos <= 3 ? `pos-${pos}` : 'pos-n';
       return `<tr>
-        <td><span class="pos-badge" style="background:#fdf2f2;color:#b91c1c;font-weight:700">${pos}</span></td>
+        <td><span class="pos-badge ${badgeCls}">${pos}</span></td>
         <td>${dot}${s.name}<br><span class="text-muted" style="font-size:0.72rem">HCP ${s.handicap ?? '?'}</span></td>
         ${dayTds}
-        <td style="text-align:right;font-weight:700;color:#b91c1c;font-size:1.1rem;background:#fdf2f2">${s.total}</td>
+        <td style="text-align:right;font-weight:700;color:#b91c1c;background:#fdf2f2">${s.total}</td>
       </tr>`;
     }).join('');
 
