@@ -844,11 +844,11 @@ const ScorecardPage = (() => {
 
           <!-- Lost Balls count subsection -->
           <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px dashed #e5e7eb;padding-top:8px;margin-top:2px">
-            <span style="font-size:0.8rem;color:#b91c1c;font-weight:700;display:flex;align-items:center;gap:4px">🔴 Lost Balls on Hole:</span>
+            <span style="font-size:0.8rem;color:#1c1c1e;font-weight:600;display:flex;align-items:center;gap:4px">Lost Balls on Hole:</span>
             <div style="display:flex;align-items:center;gap:8px">
-              <button class="sc-single-lost-btn" onclick="ScorecardPage.adjustSingleHoleLost('${pid}', -1)" style="width:30px;height:30px;border-radius:50%;border:1px solid #f5c2c2;background:#fdf2f2;color:#b91c1c;font-size:1.1rem;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent">−</button>
-              <span id="sc-single-lost-val-${pid}" style="font-size:0.95rem;font-weight:800;color:#b91c1c;width:20px;text-align:center">${lostVal}</span>
-              <button class="sc-single-lost-btn" onclick="ScorecardPage.adjustSingleHoleLost('${pid}', 1)" style="width:30px;height:30px;border-radius:50%;border:1px solid #f5c2c2;background:#fdf2f2;color:#b91c1c;font-size:1.1rem;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent">+</button>
+              <button class="sc-single-lost-btn" onclick="ScorecardPage.adjustSingleHoleLost('${pid}', -1)" style="width:30px;height:30px;border-radius:50%;border:1px solid #d0d7de;background:#f6f8fa;color:#1c1c1e;font-size:1.1rem;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent">−</button>
+              <span id="sc-single-lost-val-${pid}" style="font-size:0.95rem;font-weight:800;color:#1c1c1e;width:20px;text-align:center">${lostVal}</span>
+              <button class="sc-single-lost-btn" onclick="ScorecardPage.adjustSingleHoleLost('${pid}', 1)" style="width:30px;height:30px;border-radius:50%;border:1px solid #d0d7de;background:#f6f8fa;color:#1c1c1e;font-size:1.1rem;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent">+</button>
             </div>
           </div>
         </div>
