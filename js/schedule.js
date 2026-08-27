@@ -19,7 +19,7 @@ const SchedulePage = (() => {
   const FORMAT_LABELS = {
     singles: 'Singles Stableford',
     pairs:   'Pairs Stableford',
-    team:    'Team Stableford (Best 2/hole)'
+    team:    'Team Day [ Best 2 (3/4s), Best 3 (5s) ]'
   };
   const FORMAT_CLASS = { singles: 'format-singles', pairs: 'format-pairs', team: 'format-team' };
 
@@ -50,7 +50,7 @@ const SchedulePage = (() => {
             <select id="de-format">
               <option value="singles">Singles Stableford</option>
               <option value="pairs">Pairs Stableford</option>
-              <option value="team">Team Stableford (Best 2/hole)</option>
+              <option value="team">Team Day [ Best 2 (3/4s), Best 3 (5s) ]</option>
             </select>
           </div>
           <div class="form-group">

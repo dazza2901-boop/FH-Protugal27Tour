@@ -12,6 +12,9 @@ const App = (() => {
 
   // ── Init ─────────────────────────────────────────────────
   async function init() {
+    // Correct team colors by name on every startup (name is source of truth)
+    _fixTeamColors();
+
     // Load config for tournament name
     DB.on('config', cfg => {
       _config = cfg || {};
@@ -146,6 +149,32 @@ const App = (() => {
     document.querySelectorAll('.admin-only').forEach(el => el.classList.add('hidden'));
     document.getElementById('admin-btn').title = 'Admin';
     document.getElementById('admin-btn').textContent = '⚙️';
+  }
+
+  // ── Fix team colors by name ──────────────────────────────
+  // Runs on every startup. Team name is the source of truth.
+  // Keywords match case-insensitively against the stored team name.
+  async function _fixTeamColors() {
+    const NAME_COLOR = [
+      { keyword: 'red',   color: '#cc0000' },
+      { keyword: 'blue',  color: '#0055cc' },
+      { keyword: 'green', color: '#007a33' },
+    ];
+    try {
+      const teams = await DB.get('teams');
+      if (!teams) return;
+      for (const [tid, team] of Object.entries(teams)) {
+        const lower = (team.name || '').toLowerCase();
+        for (const { keyword, color } of NAME_COLOR) {
+          if (lower.includes(keyword) && team.color !== color) {
+            await DB.update(`teams/${tid}`, { color });
+            break;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('_fixTeamColors:', e);
+    }
   }
 
   // ── Toast ────────────────────────────────────────────────

@@ -4,6 +4,7 @@
 //  Rows per player: [gross input] [stableford pts]
 //  Fixed header:    [hole] [par] [SI]
 //  Footer:          totals per player + group contribution row
+//  Below grid:      Shot Allocation panel (per-day handicap overrides)
 // ============================================================
 
 const ScorecardPage = (() => {
@@ -13,13 +14,25 @@ const ScorecardPage = (() => {
   let _unsub     = null;
   let _unsubP    = null;
   let _unsubS    = null;
+  let _unsubH    = null;   // listener for dayHandicaps
   let _currentDay   = 1;
   let _currentGroup = null;
   let _dayFormat    = 'singles';
-  let _isSaving     = false;
   let _pars = Scoring.defaultPars();
   let _sis  = Scoring.defaultSIs();
   let _courseName = '';
+  // Per-day handicap overrides: { pid: shots }
+  // Stored in Firebase at dayHandicaps/dayN/pid
+  let _dayHcp = {};
+
+  // ── Effective handicap for a player on the current day ───
+  // Returns the explicitly allocated shots for today, or 0 if none set.
+  // Shot allocation is always entered manually — no index fallback.
+  function effectiveHcp(pid) {
+    const v = _dayHcp[pid];
+    if (v !== undefined && v !== null && v !== '') return Number(v);
+    return 0;
+  }
 
   // ── Render shell ─────────────────────────────────────────
   function render(container) {
@@ -60,6 +73,22 @@ const ScorecardPage = (() => {
             🗑️ Reset All Scores
           </button>
         </div>
+
+        <!-- Shot Allocation panel -->
+        <div class="card" id="shot-alloc-card" style="margin-top:14px">
+          <div class="card-header" style="margin-bottom:12px">
+            <span class="card-title">🏌️ Shot Allocation — Day <span id="sa-day-label">1</span></span>
+            <span class="text-muted" style="font-size:0.75rem">Overrides handicap index for scoring</span>
+          </div>
+          <p class="text-muted" style="font-size:0.82rem;margin-bottom:12px;line-height:1.5">
+            Enter the <strong>number of shots</strong> each player receives today.
+            Leave blank to use their handicap index as-is.
+          </p>
+          <div id="shot-alloc-rows"></div>
+          <button class="btn-primary" style="margin-top:12px;width:100%" id="sa-save-btn">
+            💾 Save Shot Allocations
+          </button>
+        </div>
       </div>
     </div>`;
 
@@ -67,11 +96,12 @@ const ScorecardPage = (() => {
     document.getElementById('sc-group-select').onchange = onGroupChange;
     document.getElementById('sc-save-btn').onclick      = saveAllScores;
     document.getElementById('sc-reset-btn').onclick     = resetAllScores;
+    document.getElementById('sa-save-btn').onclick      = saveShotAllocations;
 
     if (_unsubP) _unsubP();
     _unsubP = DB.on('players', d => {
       _players = d || {};
-      if (_currentGroup && !_isSaving) buildGrid();
+      if (_currentGroup) buildGrid();
     });
 
     onDayChange();
@@ -87,7 +117,14 @@ const ScorecardPage = (() => {
     if (_unsubS) { _unsubS(); _unsubS = null; }
     _unsubS = DB.on(`scores/day${dayNum}`, d => {
       _dayScores = d || {};
-      if (_currentGroup && !_isSaving) buildGrid();
+      if (_currentGroup) buildGrid();
+    });
+
+    // Subscribe to per-day handicap overrides
+    if (_unsubH) { _unsubH(); _unsubH = null; }
+    _unsubH = DB.on(`dayHandicaps/day${dayNum}`, d => {
+      _dayHcp = d || {};
+      if (_currentGroup) buildGrid();
     });
 
     DB.get(`schedule/day${dayNum}`).then(async day => {
@@ -103,7 +140,7 @@ const ScorecardPage = (() => {
         _sis  = Scoring.defaultSIs();
         _courseName = '';
       }
-      const fmtLabel = { singles:'Singles Stableford', pairs:'Pairs Stableford', team:'Team Stableford (Best 2 per hole)' };
+      const fmtLabel = { singles:'Singles Stableford', pairs:'Pairs Stableford', team:'Team Day [ Best 2 (3/4s), Best 3 (5s) ]' };
       const info = document.getElementById('sc-day-info');
       if (info) info.textContent = day
         ? `${day.label || `Day ${dayNum}`} · ${fmtLabel[day.format] || day.format} · Tee: ${day.teeTime || '—'}${_courseName ? ` · ${_courseName}` : ''}`
@@ -181,17 +218,19 @@ const ScorecardPage = (() => {
     const groupTitle = document.getElementById('sc-group-title');
     if (groupTitle) groupTitle.textContent = playerIds.map(pid => _players[pid]?.name || pid).join(' · ');
 
-    const fmtLabel = { singles:'Singles', pairs:'Pairs', team:'Team (Best 2/hole)' };
+    const fmtLabel = { singles:'Singles', pairs:'Pairs', team:'Team Day [ Best 2 (3/4s), Best 3 (5s) ]' };
     const tag = document.getElementById('sc-format-tag');
     if (tag) {
       tag.textContent = fmtLabel[_dayFormat] || _dayFormat;
       tag.className = `tag format-badge format-${_dayFormat}`;
     }
 
-    // ── Column helpers ──────────────────────────────────────
-    // Cols: [label] [h1..h9] [OUT] [h10..h18] [IN] [TOT] [SBF]
-    const holeNums = Array.from({length: 18}, (_, i) => i + 1);
+    // Update shot allocation day label
+    const saLabel = document.getElementById('sa-day-label');
+    if (saLabel) saLabel.textContent = _currentDay;
 
+    // ── Column helpers ──────────────────────────────────────
+    const holeNums = Array.from({length: 18}, (_, i) => i + 1);
     const holeTh = (h) => `<th class="sc-hole-th">${h}</th>`;
     const subTh  = (t) => `<th class="sc-sub-th">${t}</th>`;
 
@@ -231,11 +270,10 @@ const ScorecardPage = (() => {
 
     html += `</thead><tbody>`;
 
-    // ── Per-player rows (2 rows each: gross input + stableford pts) ─
-    // On pairs days, a pair-total row is inserted after every 2 players
+    // ── Per-player rows ─────────────────────────────────────
     playerIds.forEach((pid, rowIdx) => {
       const p        = _players[pid];
-      const handicap = p?.handicap || 0;
+      const hcp      = effectiveHcp(pid);   // use day override if set
       const existing = _dayScores[pid] || {};
       const shade    = rowIdx % 2 === 1 ? 'sc-row-alt' : '';
 
@@ -243,15 +281,21 @@ const ScorecardPage = (() => {
       const holeStbf = holeNums.map(h => {
         const gross = existing[`h${h}`] || 0;
         if (!gross) return '';
-        const shots = Scoring.shotsOnHole(handicap, _sis[h - 1]);
+        const shots = Scoring.shotsOnHole(hcp, _sis[h - 1]);
         return Scoring.stablefordPoints(gross, _pars[h - 1], shots);
       });
+
+      // Show allocated shots for today (or "—" if not yet set)
+      const hasAlloc   = _dayHcp[pid] !== undefined && _dayHcp[pid] !== null && _dayHcp[pid] !== '';
+      const hcpDisplay = hasAlloc
+        ? `<strong style="color:#1a5c2a">${hcp} shot${hcp !== 1 ? 's' : ''}</strong>`
+        : `<span style="color:#c0392b;font-size:0.7rem">shots not set</span>`;
 
       // Row A: gross score inputs
       html += `<tr class="sc-gross-row ${shade}">
         <td class="sc-name-th sc-player-name-cell" rowspan="2">
           <div class="sc-player-label">${p?.name || pid}</div>
-          <div class="sc-hcp-label">HCP ${handicap}</div>
+          <div class="sc-hcp-label">${hcpDisplay}</div>
         </td>`;
 
       for (let i = 0; i < 9; i++) {
@@ -262,7 +306,7 @@ const ScorecardPage = (() => {
           <input class="sc-input ${cls}" type="number" min="1" max="15"
             id="si-${pid}-${h}" value="${gross}"
             data-pid="${pid}" data-hole="${h}"
-            data-par="${_pars[i]}" data-si="${_sis[i]}" data-hcp="${handicap}"
+            data-par="${_pars[i]}" data-si="${_sis[i]}" data-hcp="${hcp}"
             oninput="ScorecardPage.onInput(this)" />
         </td>`;
       }
@@ -276,7 +320,7 @@ const ScorecardPage = (() => {
           <input class="sc-input ${cls}" type="number" min="1" max="15"
             id="si-${pid}-${h}" value="${gross}"
             data-pid="${pid}" data-hole="${h}"
-            data-par="${_pars[i + 9]}" data-si="${_sis[i + 9]}" data-hcp="${handicap}"
+            data-par="${_pars[i + 9]}" data-si="${_sis[i + 9]}" data-hcp="${hcp}"
             oninput="ScorecardPage.onInput(this)" />
         </td>`;
       }
@@ -336,9 +380,6 @@ const ScorecardPage = (() => {
     html += `<tr class="sc-contrib-row">
       <td class="sc-name-th sc-contrib-label">${contribLabel}</td>`;
 
-    const contribHoles = computeContrib(playerIds, holeNums, null); // pass null = read from DOM when called later
-
-    // We render placeholders now; recalcContrib() fills them
     for (let i = 0; i < 9; i++) {
       html += `<td class="sc-hole-th sc-contrib-cell${i === 8 ? ' sc-nine-end' : ''}" id="cb-${i+1}"></td>`;
     }
@@ -358,6 +399,69 @@ const ScorecardPage = (() => {
     playerIds.forEach(pid => recalcPlayer(pid));
     if (_dayFormat === 'pairs') recalcPairs(playerIds);
     recalcContrib(playerIds);
+
+    // Render the shot allocation panel for players in this group
+    renderShotAlloc(playerIds);
+  }
+
+  // ── Shot Allocation panel ────────────────────────────────
+  function renderShotAlloc(playerIds) {
+    const el = document.getElementById('shot-alloc-rows');
+    if (!el) return;
+
+    el.innerHTML = playerIds.map(pid => {
+      const p      = _players[pid];
+      const stored = _dayHcp[pid];
+      const hasVal = stored !== undefined && stored !== null && stored !== '';
+      return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0">
+        <div style="flex:1;min-width:0">
+          <div style="font-weight:600;font-size:0.9rem">${esc(p?.name || pid)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+          <label style="font-size:0.78rem;color:#57606a;white-space:nowrap">Shots today</label>
+          <input type="text" inputmode="numeric" pattern="[0-9]*" id="sa-${pid}"
+            value="${hasVal ? stored : ''}"
+            placeholder="—"
+            style="width:64px;padding:7px 8px;border:1.5px solid ${hasVal ? '#1a5c2a' : '#d0d7de'};border-radius:7px;font-size:1rem;text-align:center;font-weight:700;color:${hasVal ? '#1a5c2a' : '#1a2332'};-webkit-appearance:none;appearance:none"
+            oninput="this.value=this.value.replace(/[^0-9]/g,'');this.style.borderColor=this.value!==''?'#1a5c2a':'#d0d7de';this.style.color=this.value!==''?'#1a5c2a':'#1a2332'"
+          />
+        </div>
+      </div>`;
+    }).join('') + (playerIds.length === 0 ? '<p class="text-muted">No players in this group.</p>' : '');
+  }
+
+  // ── Save shot allocations ────────────────────────────────
+  async function saveShotAllocations() {
+    const playerIds = _currentGroup?.playerIds || [];
+    if (playerIds.length === 0) { App.toast('No players in this group'); return; }
+
+    // Snapshot ALL input values BEFORE any async write.
+    // Each DB.set triggers the _unsubH listener which calls buildGrid(),
+    // destroying the DOM inputs — so we must read everything first.
+    const values = {};
+    playerIds.forEach(pid => {
+      const input = document.getElementById(`sa-${pid}`);
+      values[pid] = input?.value?.trim() ?? '';
+    });
+
+    const btn = document.getElementById('sa-save-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+    try {
+      const dayKey = `dayHandicaps/day${_currentDay}`;
+      await Promise.all(playerIds.map(pid => {
+        const val = values[pid];
+        return (val !== '')
+          ? DB.set(`${dayKey}/${pid}`, Number(val))
+          : DB.remove(`${dayKey}/${pid}`);
+      }));
+      App.toast('Shot allocations saved ✓');
+    } catch (e) {
+      console.error('saveShotAllocations error:', e);
+      App.toast('Error saving allocations');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '💾 Save Shot Allocations'; }
+    }
   }
 
   // ── Live input ───────────────────────────────────────────
@@ -366,10 +470,10 @@ const ScorecardPage = (() => {
     const h     = parseInt(input.dataset.hole);
     const par   = parseInt(input.dataset.par);
     const si    = parseInt(input.dataset.si);
+    // Always use the current effective handicap (data-hcp is set at build time)
     const hcp   = parseInt(input.dataset.hcp) || 0;
     const gross = parseInt(input.value) || 0;
     const shots = Scoring.shotsOnHole(hcp, si);
-    const idx   = h - 1;
 
     // Update input colour
     input.className = `sc-input ${gross ? Scoring.classify(gross, par) : ''}`;
@@ -386,7 +490,7 @@ const ScorecardPage = (() => {
 
   // ── Recalc player totals ─────────────────────────────────
   function recalcPlayer(pid) {
-    const hcp = _players[pid]?.handicap || 0;
+    const hcp = effectiveHcp(pid);
     let outGross = 0, inGross  = 0;
     let outPts   = 0, inPts   = 0;
 
@@ -436,18 +540,18 @@ const ScorecardPage = (() => {
           const inp   = document.getElementById(`si-${pidA}-${h}`);
           const gross = parseInt(inp?.value) || 0;
           if (!gross) return 0;
-          const shots = Scoring.shotsOnHole(_players[pidA]?.handicap || 0, _sis[i]);
+          const shots = Scoring.shotsOnHole(effectiveHcp(pidA), _sis[i]);
           return Scoring.stablefordPoints(gross, _pars[i], shots);
         })();
         const ptsB = (() => {
           const inp   = document.getElementById(`si-${pidB}-${h}`);
           const gross = parseInt(inp?.value) || 0;
           if (!gross) return 0;
-          const shots = Scoring.shotsOnHole(_players[pidB]?.handicap || 0, _sis[i]);
+          const shots = Scoring.shotsOnHole(effectiveHcp(pidB), _sis[i]);
           return Scoring.stablefordPoints(gross, _pars[i], shots);
         })();
-        const best1   = Math.max(ptsA, ptsB);
-        const cell = document.getElementById(`pr-${pairIdx}-${h}`);
+        const best1 = Math.max(ptsA, ptsB);
+        const cell  = document.getElementById(`pr-${pairIdx}-${h}`);
         if (cell) cell.textContent = best1 || '';
         if (h <= 9) outTotal += best1;
         else        inTotal  += best1;
@@ -472,23 +576,20 @@ const ScorecardPage = (() => {
 
     for (let h = 1; h <= 18; h++) {
       const i = h - 1;
-      // Collect stableford pts for each player on this hole
       const pts = playerIds.map(pid => {
         const inp   = document.getElementById(`si-${pid}-${h}`);
         const gross = parseInt(inp?.value) || 0;
         if (!gross) return 0;
-        const shots = Scoring.shotsOnHole(_players[pid]?.handicap || 0, _sis[i]);
+        const shots = Scoring.shotsOnHole(effectiveHcp(pid), _sis[i]);
         return Scoring.stablefordPoints(gross, _pars[i], shots);
       });
 
       let contrib = 0;
       if (_dayFormat === 'team') {
-        // Best 3 on par 5s, best 2 on par 3s/4s
         const sorted = [...pts].sort((a, b) => b - a);
         const count  = _pars[i] === 5 ? 3 : 2;
         for (let k = 0; k < count; k++) contrib += sorted[k] || 0;
       } else {
-        // Singles or Pairs: best 1 per hole
         contrib = Math.max(...pts, 0);
       }
 
@@ -509,7 +610,7 @@ const ScorecardPage = (() => {
     }
   }
 
-  // ── Save ─────────────────────────────────────────────────
+  // ── Save scores ──────────────────────────────────────────
   async function saveAllScores() {
     const playerIds = _currentGroup?.playerIds || [];
     if (playerIds.length === 0) { App.toast('No players in this group'); return; }
@@ -517,8 +618,7 @@ const ScorecardPage = (() => {
     const btn = document.getElementById('sc-save-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
-    // Snapshot ALL values before any async write —
-    // Firebase listener would otherwise rebuild the grid and wipe inputs
+    // Snapshot ALL values before any async write
     const snapshots = {};
     for (const pid of playerIds) {
       snapshots[pid] = Array.from({length: 18}, (_, i) =>
@@ -526,13 +626,12 @@ const ScorecardPage = (() => {
       );
     }
 
-    _isSaving = true;
     try {
       const dayKey = `scores/day${_currentDay}`;
       let saved = 0;
       for (const pid of playerIds) {
         const scores = snapshots[pid];
-        const hcp    = _players[pid]?.handicap || 0;
+        const hcp    = effectiveHcp(pid);   // use day override if set
         const name   = _players[pid]?.name || pid;
         const data   = { playerName: name, savedAt: Date.now() };
         scores.forEach((val, i) => { data[`h${i + 1}`] = val; });
@@ -545,9 +644,8 @@ const ScorecardPage = (() => {
       console.error('saveAllScores error:', err);
       App.toast('Error saving — check Firebase config');
     } finally {
-      _isSaving = false;
       if (btn) { btn.disabled = false; btn.textContent = '💾 Save All Scores'; }
-      buildGrid();
+      // Grid rebuilds automatically via the _unsubS Firebase listener
     }
   }
 
@@ -563,30 +661,29 @@ const ScorecardPage = (() => {
     const btn = document.getElementById('sc-reset-btn');
     if (btn) { btn.disabled = true; btn.textContent = 'Resetting…'; }
 
-    _isSaving = true;
     try {
       const dayKey = `scores/day${_currentDay}`;
-      for (const pid of playerIds) {
-        await DB.remove(`${dayKey}/${pid}`);
-      }
+      await Promise.all(playerIds.map(pid => DB.remove(`${dayKey}/${pid}`)));
       App.toast('Scores reset ✓');
     } catch (err) {
       console.error('resetAllScores error:', err);
       App.toast('Error resetting — check Firebase config');
     } finally {
-      _isSaving = false;
       if (btn) { btn.disabled = false; btn.textContent = '🗑️ Reset All Scores'; }
-      buildGrid();
+      // Grid rebuilds automatically via the _unsubS Firebase listener
     }
   }
 
-  // Stub — not used but kept for safe calling from buildGrid
+  function esc(s) { return String(s || '').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+  // Stub kept for safe external calling
   function computeContrib() {}
 
   function destroy() {
     if (_unsub)  { _unsub();  _unsub  = null; }
     if (_unsubP) { _unsubP(); _unsubP = null; }
     if (_unsubS) { _unsubS(); _unsubS = null; }
+    if (_unsubH) { _unsubH(); _unsubH = null; }
   }
 
   return { render, destroy, onInput, resetAllScores };

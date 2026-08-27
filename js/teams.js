@@ -14,10 +14,27 @@
 const TeamsPage = (() => {
 
   const DEFAULT_TEAMS = [
-    { name: 'Team Eagle',  color: '#c8a800' },
-    { name: 'Team Birdie', color: '#1a5c2a' },
-    { name: 'Team Par',    color: '#2e86ab' }
+    { name: 'Team Eagle',  color: '#cc0000' },
+    { name: 'Team Birdie', color: '#0055cc' },
+    { name: 'Team Par',    color: '#007a33' }
   ];
+
+  // Map team name keywords → canonical color.
+  // Any team whose name contains one of these keywords (case-insensitive)
+  // will have its color corrected automatically on load.
+  const NAME_COLOR_MAP = [
+    { keyword: 'red',   color: '#cc0000' },
+    { keyword: 'blue',  color: '#0055cc' },
+    { keyword: 'green', color: '#007a33' },
+  ];
+
+  function canonicalColor(name) {
+    const lower = (name || '').toLowerCase();
+    for (const { keyword, color } of NAME_COLOR_MAP) {
+      if (lower.includes(keyword)) return color;
+    }
+    return null;
+  }
 
   // Fixed slot → team index mapping (0-based team index)
   // Slot 1 = lowest handicap, slot 12 = highest handicap
@@ -67,9 +84,9 @@ const TeamsPage = (() => {
           Players are ranked 1–12 by handicap (lowest = Slot 1). Slots are fixed to teams. When handicaps change, hit <strong>Auto-Assign</strong> to rebuild.
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:0.78rem">
-          <span style="padding:3px 10px;border-radius:12px;background:#c8a80022;border:1px solid #c8a800;color:#8a7000;font-weight:600">Team A — Slots 1, 4, 9, 10</span>
-          <span style="padding:3px 10px;border-radius:12px;background:#1a5c2a22;border:1px solid #1a5c2a;color:#1a5c2a;font-weight:600">Team B — Slots 2, 6, 7, 12</span>
-          <span style="padding:3px 10px;border-radius:12px;background:#2e86ab22;border:1px solid #2e86ab;color:#1a5980;font-weight:600">Team C — Slots 3, 5, 8, 11</span>
+          <span style="padding:3px 10px;border-radius:12px;background:#cc000022;border:1px solid #cc0000;color:#cc0000;font-weight:600">Team A — Slots 1, 4, 9, 10</span>
+          <span style="padding:3px 10px;border-radius:12px;background:#0055cc22;border:1px solid #0055cc;color:#0055cc;font-weight:600">Team B — Slots 2, 6, 7, 12</span>
+          <span style="padding:3px 10px;border-radius:12px;background:#007a3322;border:1px solid #007a33;color:#007a33;font-weight:600">Team C — Slots 3, 5, 8, 11</span>
         </div>
       </div>` : ''}
 
@@ -86,7 +103,7 @@ const TeamsPage = (() => {
     _unsubP = DB.on('players', d => { _players = d || {}; renderAll(); scheduleSync(); });
     _unsub  = DB.on('teams',   d => { _teams   = d || {}; renderAll(); });
 
-    // Seed default teams if none exist
+    // Seed default teams if none exist; migrate colors if old values still stored
     const existing = await DB.get('teams');
     if (!existing) {
       const batch = {};
@@ -94,6 +111,14 @@ const TeamsPage = (() => {
         batch[DB_pushKey()] = { ...t, playerIds: [] };
       }
       await DB.set('teams', batch);
+    } else {
+      // Correct any team whose stored color doesn't match its name
+      for (const [tid, team] of Object.entries(existing)) {
+        const correct = canonicalColor(team.name);
+        if (correct && correct !== team.color) {
+          await DB.update(`teams/${tid}`, { color: correct });
+        }
+      }
     }
   }
 

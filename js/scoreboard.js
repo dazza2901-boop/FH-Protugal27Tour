@@ -465,7 +465,7 @@ const ScoreboardPage = (() => {
       const pos = idx + 1;
       const dayTds = Array.from({length: DAYS}, (_, i) => {
         const pts = s.dayPts[`day${i+1}`];
-        return `<td style="text-align:right">${pts !== null ? pts : '<span class="text-muted">—</span>'}</td>`;
+        return `<td style="text-align:right">${(pts !== null && pts > 0) ? pts : '<span class="text-muted">—</span>'}</td>`;
       }).join('');
       const dot = s.teamColor ? `<span class="team-color-dot" style="background:${s.teamColor}"></span>` : '';
       return `<tr>
