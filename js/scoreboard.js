@@ -886,9 +886,9 @@ const ScoreboardPage = (() => {
         }
 
         // Cell style helpers
-        const CELL  = 'padding:0;text-align:center;min-width:28px;width:28px;font-size:0.78rem;border:1px solid #e5e7eb;height:28px;vertical-align:middle';
-        const LABEL = 'padding:4px 8px;font-size:0.78rem;white-space:nowrap;border:1px solid #e5e7eb;font-weight:600';
-        const HDRCELL = `${CELL};background:#f7f8fa;color:#57606a;font-weight:600;font-size:0.72rem`;
+        const CELL  = 'padding:0;text-align:center;font-size:0.75rem;border:1px solid #e5e7eb;height:28px;vertical-align:middle';
+        const LABEL = 'padding:4px 8px;font-size:0.78rem;white-space:nowrap;border:1px solid #e5e7eb;font-weight:600;width:1%';
+        const HDRCELL = `${CELL};background:#f7f8fa;color:#57606a;font-weight:600;font-size:0.7rem`;
 
         // Hole header row
         const hdrCells = holes.map(({h}) =>
@@ -941,7 +941,7 @@ const ScoreboardPage = (() => {
         const aNameStyle = aWins ? 'font-weight:700;color:#1a5c2a' : 'color:#444';
         const bNameStyle = bWins ? 'font-weight:700;color:#1a5c2a' : 'color:#444';
 
-        return `<div style="margin-bottom:16px;overflow-x:auto">
+        return `<div style="margin-bottom:16px">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
             <span style="width:10px;height:10px;border-radius:50%;background:${teamA.color};display:inline-block;flex-shrink:0"></span>
             <span style="${aNameStyle};font-size:0.88rem">${teamA.name}</span>
@@ -950,10 +950,10 @@ const ScoreboardPage = (() => {
             <span style="${bNameStyle};font-size:0.88rem">${teamB.name}</span>
             <span style="margin-left:auto;font-size:0.78rem;color:#57606a;white-space:nowrap">${resultLabel}</span>
           </div>
-          <table style="border-collapse:collapse;table-layout:fixed">
+          <table style="border-collapse:collapse;table-layout:fixed;width:100%">
             <colgroup>
-              <col style="width:80px">
-              ${Array(18).fill('<col style="width:28px">').join('')}
+              <col style="width:72px">
+              ${Array(18).fill('<col>').join('')}
             </colgroup>
             <thead>
               <tr>
