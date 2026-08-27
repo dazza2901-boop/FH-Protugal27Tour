@@ -25,6 +25,9 @@ const ScorecardPage = (() => {
   // Stored in Firebase at dayHandicaps/dayN/pid
   let _dayHcp = {};
 
+  let _activeView  = 'table'; // 'table' or 'single'
+  let _currentHole = 1;       // 1 to 18
+
   // ── Effective handicap for a player on the current day ───
   // Returns the explicitly allocated shots for today, or 0 if none set.
   // Shot allocation is always entered manually — no index fallback.
@@ -65,13 +68,30 @@ const ScorecardPage = (() => {
             <span class="card-title" id="sc-group-title">Group</span>
             <span class="tag format-badge" id="sc-format-tag"></span>
           </div>
-          <div id="sc-table-wrap"></div>
-          <button class="btn-primary" style="width:100%;margin-top:14px" id="sc-save-btn">
-            💾 Save All Scores
-          </button>
-          <button class="btn" style="width:100%;margin-top:8px;color:#c0392b;border-color:#c0392b" id="sc-reset-btn">
-            🗑️ Reset All Scores
-          </button>
+
+          <!-- View Toggle Tab/Buttons -->
+          <div id="sc-view-toggle" style="display:flex;gap:8px;margin-bottom:12px;padding:0 4px">
+            <button id="sc-view-btn-18" class="btn-primary" style="flex:1;margin:0;padding:8px 12px;font-size:0.85rem;border-radius:6px" onclick="ScorecardPage.toggleView('table')">
+              📋 18-Hole View
+            </button>
+            <button id="sc-view-btn-single" class="btn-secondary" style="flex:1;margin:0;padding:8px 12px;font-size:0.85rem;border-radius:6px" onclick="ScorecardPage.toggleView('single')">
+              📱 Single Hole View
+            </button>
+          </div>
+
+          <!-- 18-Hole Grid Table View -->
+          <div id="sc-table-view">
+            <div id="sc-table-wrap"></div>
+            <button class="btn-primary" style="width:100%;margin-top:14px" id="sc-save-btn" onclick="ScorecardPage.saveAllScores()">
+              💾 Save All Scores
+            </button>
+            <button class="btn" style="width:100%;margin-top:8px;color:#c0392b;border-color:#c0392b" id="sc-reset-btn" onclick="ScorecardPage.resetAllScores()">
+              🗑️ Reset All Scores
+            </button>
+          </div>
+
+          <!-- Single Hole View -->
+          <div id="sc-single-view" class="hidden" style="padding:4px"></div>
         </div>
 
         <!-- Shot Allocation panel -->
@@ -94,8 +114,6 @@ const ScorecardPage = (() => {
 
     document.getElementById('sc-day-select').onchange   = onDayChange;
     document.getElementById('sc-group-select').onchange = onGroupChange;
-    document.getElementById('sc-save-btn').onclick      = saveAllScores;
-    document.getElementById('sc-reset-btn').onclick     = resetAllScores;
     document.getElementById('sa-save-btn').onclick      = saveShotAllocations;
 
     if (_unsubP) _unsubP();
@@ -231,7 +249,7 @@ const ScorecardPage = (() => {
 
     // ── Column helpers ──────────────────────────────────────
     const holeNums = Array.from({length: 18}, (_, i) => i + 1);
-    const holeTh = (h) => `<th class="sc-hole-th">${h}</th>`;
+    const holeTh = (h) => `<th class="sc-hole-th" style="cursor:pointer;text-decoration:underline;text-decoration-style:dotted" title="Click to score Hole ${h} one by one" onclick="ScorecardPage.toggleView('single'); ScorecardPage.changeSingleHole(0, ${h})">${h}</th>`;
     const subTh  = (t) => `<th class="sc-sub-th">${t}</th>`;
 
     // ── Fixed header rows ───────────────────────────────────
@@ -243,7 +261,7 @@ const ScorecardPage = (() => {
       ${holeNums.slice(0,9).map(h => holeTh(h)).join('')}
       ${subTh('OUT')}
       ${holeNums.slice(9,18).map(h => holeTh(h)).join('')}
-      ${subTh('IN')} ${subTh('TOT')} ${subTh('SBF')}
+      ${subTh('IN')} ${subTh('TOT')} ${subTh('SBF')} ${subTh('🔴 LST')}
     </tr>`;
 
     // Row 2: par
@@ -255,6 +273,7 @@ const ScorecardPage = (() => {
       <td class="sc-sub-th">${_pars.slice(9,18).reduce((a,b)=>a+b,0)}</td>
       <td class="sc-sub-th">${_pars.reduce((a,b)=>a+b,0)}</td>
       <td class="sc-sub-th"></td>
+      <td class="sc-sub-th"></td>
     </tr>`;
 
     // Row 3: stroke index
@@ -263,6 +282,7 @@ const ScorecardPage = (() => {
       ${_sis.slice(0,9).map(s => `<td class="sc-hole-th sc-si-val">${s}</td>`).join('')}
       <td class="sc-sub-th"></td>
       ${_sis.slice(9,18).map(s => `<td class="sc-hole-th sc-si-val">${s}</td>`).join('')}
+      <td class="sc-sub-th"></td>
       <td class="sc-sub-th"></td>
       <td class="sc-sub-th"></td>
       <td class="sc-sub-th"></td>
@@ -291,11 +311,18 @@ const ScorecardPage = (() => {
         ? `<strong style="color:#1a5c2a">${hcp} shot${hcp !== 1 ? 's' : ''}</strong>`
         : `<span style="color:#c0392b;font-size:0.7rem">shots not set</span>`;
 
+      // Output 18 hidden inputs for lost ball counts
+      let hiddenLostInputs = '';
+      for (let h = 1; h <= 18; h++) {
+        hiddenLostInputs += `<input type="hidden" id="lost-${pid}-${h}" value="${existing[`lost_h${h}`] || 0}" />`;
+      }
+
       // Row A: gross score inputs
       html += `<tr class="sc-gross-row ${shade}">
         <td class="sc-name-th sc-player-name-cell" rowspan="2">
           <div class="sc-player-label">${p?.name || pid}</div>
           <div class="sc-hcp-label">${hcpDisplay}</div>
+          ${hiddenLostInputs}
         </td>`;
 
       for (let i = 0; i < 9; i++) {
@@ -327,6 +354,7 @@ const ScorecardPage = (() => {
       html += `<td class="sc-sub-th sc-tot-cell" id="in-${pid}">—</td>
                <td class="sc-sub-th sc-tot-cell" id="tot-${pid}">—</td>
                <td class="sc-sbf-th sc-tot-cell" id="sbf-${pid}">—</td>
+               <td class="sc-sub-th sc-tot-cell" id="losttot-${pid}" style="background:#fdf2f2;color:#b91c1c;font-weight:700">0</td>
       </tr>`;
 
       // Row B: stableford points per hole (read-only)
@@ -346,6 +374,7 @@ const ScorecardPage = (() => {
       html += `<td class="sc-sub-th sc-pts-sub" id="inpts-${pid}">${inPts || ''}</td>
                <td class="sc-sub-th sc-pts-sub"></td>
                <td class="sc-sbf-th sc-pts-sub" id="sbftot-${pid}">${totPts || ''}</td>
+               <td class="sc-sub-th sc-pts-sub" style="background:#fdf2f2 !important"></td>
       </tr>`;
 
       // ── Pair total row — inserted after every 2nd player on pairs days ──
@@ -366,6 +395,7 @@ const ScorecardPage = (() => {
         html += `<td class="sc-sub-th sc-pair-sub" id="pr-${pairIdx}-in"></td>
                  <td class="sc-sub-th sc-pair-sub"></td>
                  <td class="sc-sbf-th sc-pair-total" id="pr-${pairIdx}-tot"></td>
+                 <td class="sc-sub-th sc-pair-sub" style="background:#1a4f80 !important"></td>
         </tr>`;
       }
     });
@@ -390,6 +420,7 @@ const ScorecardPage = (() => {
     html += `<td class="sc-sub-th sc-contrib-sub" id="cb-in"></td>
              <td class="sc-sub-th sc-contrib-sub"></td>
              <td class="sc-sbf-th sc-contrib-total" id="cb-tot"></td>
+             <td class="sc-sub-th sc-contrib-sub" style="background:#155724 !important"></td>
     </tr>`;
 
     html += `</tbody></table>`;
@@ -402,6 +433,9 @@ const ScorecardPage = (() => {
 
     // Render the shot allocation panel for players in this group
     renderShotAlloc(playerIds);
+
+    // Ensure the correct view (18-hole or single-hole) is maintained and rendered
+    toggleView(_activeView);
   }
 
   // ── Shot Allocation panel ────────────────────────────────
@@ -525,6 +559,17 @@ const ScorecardPage = (() => {
       sbfTot.style.fontWeight = '700';
       sbfTot.style.color = '#1a5c2a';
     }
+
+    // Recalculate total lost balls from hidden inputs
+    let totalLost = 0;
+    for (let h = 1; h <= 18; h++) {
+      const lostInp = document.getElementById(`lost-${pid}-${h}`);
+      totalLost += parseInt(lostInp?.value) || 0;
+    }
+    const lostTotEl = document.getElementById(`losttot-${pid}`);
+    if (lostTotEl) {
+      lostTotEl.textContent = totalLost;
+    }
   }
 
   // ── Recalc pair total rows (pairs format only) ───────────
@@ -611,18 +656,22 @@ const ScorecardPage = (() => {
   }
 
   // ── Save scores ──────────────────────────────────────────
-  async function saveAllScores() {
+  async function saveAllScores(silent = false) {
     const playerIds = _currentGroup?.playerIds || [];
-    if (playerIds.length === 0) { App.toast('No players in this group'); return; }
+    if (playerIds.length === 0) { if (!silent) App.toast('No players in this group'); return; }
 
     const btn = document.getElementById('sc-save-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    if (btn && !silent) { btn.disabled = true; btn.textContent = 'Saving…'; }
 
     // Snapshot ALL values before any async write
     const snapshots = {};
+    const lostSnapshots = {};
     for (const pid of playerIds) {
       snapshots[pid] = Array.from({length: 18}, (_, i) =>
         parseInt(document.getElementById(`si-${pid}-${i + 1}`)?.value) || 0
+      );
+      lostSnapshots[pid] = Array.from({length: 18}, (_, i) =>
+        parseInt(document.getElementById(`lost-${pid}-${i + 1}`)?.value) || 0
       );
     }
 
@@ -631,20 +680,27 @@ const ScorecardPage = (() => {
       let saved = 0;
       for (const pid of playerIds) {
         const scores = snapshots[pid];
+        const losts  = lostSnapshots[pid];
         const hcp    = effectiveHcp(pid);   // use day override if set
         const name   = _players[pid]?.name || pid;
         const data   = { playerName: name, savedAt: Date.now() };
         scores.forEach((val, i) => { data[`h${i + 1}`] = val; });
+        losts.forEach((val, i) => { data[`lost_h${i + 1}`] = val; });
         data.stableford = Scoring.totalStableford(scores, _pars, _sis, hcp);
+        data.lostBalls = losts.reduce((a, b) => a + b, 0);
         await DB.set(`${dayKey}/${pid}`, data);
         saved++;
       }
-      App.toast(`Saved scores for ${saved} player${saved !== 1 ? 's' : ''} ✓`);
+      if (!silent) {
+        App.toast(`Saved scores for ${saved} player${saved !== 1 ? 's' : ''} ✓`);
+      }
     } catch (err) {
       console.error('saveAllScores error:', err);
-      App.toast('Error saving — check Firebase config');
+      if (!silent) {
+        App.toast('Error saving — check Firebase config');
+      }
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '💾 Save All Scores'; }
+      if (btn && !silent) { btn.disabled = false; btn.textContent = '💾 Save All Scores'; }
       // Grid rebuilds automatically via the _unsubS Firebase listener
     }
   }
@@ -684,7 +740,264 @@ const ScorecardPage = (() => {
     if (_unsubP) { _unsubP(); _unsubP = null; }
     if (_unsubS) { _unsubS(); _unsubS = null; }
     if (_unsubH) { _unsubH(); _unsubH = null; }
+    _activeView  = 'table';
+    _currentHole = 1;
   }
 
-  return { render, destroy, onInput, resetAllScores };
+  // ── Single Hole View Controller & Scoring Controls ───────
+  function toggleView(view) {
+    _activeView = view;
+    const btn18         = document.getElementById('sc-view-btn-18');
+    const btnSingle     = document.getElementById('sc-view-btn-single');
+    const tableView     = document.getElementById('sc-table-view');
+    const singleView    = document.getElementById('sc-single-view');
+    const shotAllocCard = document.getElementById('shot-alloc-card');
+
+    if (view === 'single') {
+      if (btn18) { btn18.className = 'btn-secondary'; }
+      if (btnSingle) { btnSingle.className = 'btn-primary'; }
+      tableView?.classList.add('hidden');
+      singleView?.classList.remove('hidden');
+      shotAllocCard?.classList.add('hidden');
+      renderSingleHole();
+    } else {
+      if (btn18) { btn18.className = 'btn-primary'; }
+      if (btnSingle) { btnSingle.className = 'btn-secondary'; }
+      tableView?.classList.remove('hidden');
+      singleView?.classList.add('hidden');
+      shotAllocCard?.classList.remove('hidden');
+    }
+  }
+
+  function renderSingleHole() {
+    const singleArea = document.getElementById('sc-single-view');
+    if (!singleArea) return;
+
+    const playerIds = _currentGroup?.playerIds || [];
+    if (playerIds.length === 0) {
+      singleArea.innerHTML = '<p class="text-muted" style="text-align:center;padding:16px 0">No players in this group.</p>';
+      return;
+    }
+
+    // Prepare options for the hole select dropdown
+    let optionsHtml = '';
+    for (let h = 1; h <= 18; h++) {
+      const par = _pars[h - 1];
+      const si = _sis[h - 1];
+      optionsHtml += `<option value="${h}" ${h === _currentHole ? 'selected' : ''}>Hole ${h} (Par ${par}, SI ${si})</option>`;
+    }
+
+    const currentPar = _pars[_currentHole - 1];
+    const currentSi = _sis[_currentHole - 1];
+
+    let playersHtml = playerIds.map(pid => {
+      const p = _players[pid];
+      const hcp = effectiveHcp(pid);
+      const shots = Scoring.shotsOnHole(hcp, currentSi);
+
+      // Read current score from the main grid input
+      const inputEl = document.getElementById(`si-${pid}-${_currentHole}`);
+      const grossVal = inputEl ? parseInt(inputEl.value) || 0 : 0;
+      const pts = grossVal ? Scoring.stablefordPoints(grossVal, currentPar, shots) : 0;
+
+      // Color coding for score
+      const scoreClass = grossVal ? Scoring.classify(grossVal, currentPar) : '';
+
+      // Read current lost ball count from the hidden input
+      const lostEl = document.getElementById(`lost-${pid}-${_currentHole}`);
+      const lostVal = lostEl ? parseInt(lostEl.value) || 0 : 0;
+
+      return `
+        <div class="sc-single-player-row" style="flex-direction:column;align-items:stretch;gap:8px">
+          <div style="display:flex;align-items:center;justify-content:space-between">
+            <div style="flex:1;min-width:0;padding-right:8px">
+              <div style="font-weight:700;font-size:1rem;color:#1c1c1e;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(p?.name || pid)}</div>
+              <div style="font-size:0.78rem;color:#57606a;margin-top:2px">
+                Hcp: ${hcp} · SI ${currentSi} · Receives: <strong style="color:${shots > 0 ? '#1a5c2a' : '#57606a'}">${shots} shot${shots !== 1 ? 's' : ''}</strong>
+              </div>
+            </div>
+            
+            <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+              <!-- Minus Button -->
+              <button class="sc-single-adjust-btn" onclick="ScorecardPage.adjustSingleHoleScore('${pid}', -1)">
+                −
+              </button>
+              
+              <!-- Value Display -->
+              <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;width:44px;height:44px;border:1.5px solid #e5e7eb;border-radius:8px;background:#fff;overflow:hidden">
+                <span id="sc-single-val-${pid}" class="sc-single-score-display ${scoreClass}">
+                  ${grossVal || '—'}
+                </span>
+              </div>
+              
+              <!-- Plus Button -->
+              <button class="sc-single-adjust-btn" onclick="ScorecardPage.adjustSingleHoleScore('${pid}', 1)">
+                +
+              </button>
+              
+              <!-- Stableford Points Badge -->
+              <div id="sc-single-pts-${pid}" style="font-size:0.8rem;font-weight:700;color:#1a5c2a;width:48px;height:44px;text-align:center;background:#edf5f0;border:1px solid #d4edda;padding:0;border-radius:8px;display:flex;align-items:center;justify-content:center;box-sizing:border-box">
+                ${grossVal ? `${pts} pts` : '—'}
+              </div>
+            </div>
+          </div>
+
+          <!-- Lost Balls count subsection -->
+          <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px dashed #e5e7eb;padding-top:8px;margin-top:2px">
+            <span style="font-size:0.8rem;color:#b91c1c;font-weight:700;display:flex;align-items:center;gap:4px">🔴 Lost Balls on Hole:</span>
+            <div style="display:flex;align-items:center;gap:8px">
+              <button class="sc-single-lost-btn" onclick="ScorecardPage.adjustSingleHoleLost('${pid}', -1)" style="width:30px;height:30px;border-radius:50%;border:1px solid #f5c2c2;background:#fdf2f2;color:#b91c1c;font-size:1.1rem;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent">−</button>
+              <span id="sc-single-lost-val-${pid}" style="font-size:0.95rem;font-weight:800;color:#b91c1c;width:20px;text-align:center">${lostVal}</span>
+              <button class="sc-single-lost-btn" onclick="ScorecardPage.adjustSingleHoleLost('${pid}', 1)" style="width:30px;height:30px;border-radius:50%;border:1px solid #f5c2c2;background:#fdf2f2;color:#b91c1c;font-size:1.1rem;font-weight:700;display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent">+</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    singleArea.innerHTML = `
+      <div class="sc-single-header" style="margin-top:4px;margin-bottom:12px;display:flex;flex-direction:column;gap:8px">
+        <!-- Hole select controls -->
+        <div style="display:flex;align-items:center;gap:6px">
+          <button class="btn-secondary" style="padding:10px 14px;font-size:1.1rem;border-radius:8px;margin:0;cursor:pointer" onclick="ScorecardPage.changeSingleHole(-1)" ${_currentHole === 1 ? 'disabled style="opacity:0.4;cursor:not-allowed"' : ''}>
+            ◀
+          </button>
+          
+          <select id="sc-single-hole-select" onchange="ScorecardPage.changeSingleHole(0, this.value)" style="flex:1;padding:10px;font-size:1rem;font-weight:700;border:1.5px solid #d0d7de;border-radius:8px;background:#fff;text-align:center;font-family:inherit;color:#1c1c1e">
+            ${optionsHtml}
+          </select>
+          
+          <button class="btn-secondary" style="padding:10px 14px;font-size:1.1rem;border-radius:8px;margin:0;cursor:pointer" onclick="ScorecardPage.changeSingleHole(1)" ${_currentHole === 18 ? 'disabled style="opacity:0.4;cursor:not-allowed"' : ''}>
+            ▶
+          </button>
+        </div>
+        
+        <!-- Info badges -->
+        <div style="display:flex;justify-content:center;gap:12px;font-size:0.85rem;font-weight:600;color:#57606a;background:#f7f8fa;padding:8px;border-radius:6px;border:1px solid #e5e7eb">
+          <span>⛳ Par: <strong>${currentPar}</strong></span>
+          <span>🎯 Stroke Index: <strong>${currentSi}</strong></span>
+        </div>
+      </div>
+
+      <div class="sc-single-players-list" style="border:1px solid #e5e7eb;border-radius:8px;background:#fff;padding:0 8px">
+        ${playersHtml}
+      </div>
+
+      <div style="margin-top:16px;display:flex;flex-direction:column;gap:8px">
+        <button class="btn-primary" style="width:100%;padding:12px;font-size:0.95rem;display:flex;align-items:center;justify-content:center;gap:6px" id="sc-single-save-btn" onclick="ScorecardPage.saveFromSingleHole()">
+          💾 Save Scores
+        </button>
+        <button class="btn-secondary" style="width:100%;padding:10px;font-size:0.9rem" onclick="ScorecardPage.toggleView('table')">
+          📋 Back to 18-Hole View
+        </button>
+      </div>
+    `;
+  }
+
+  function changeSingleHole(delta, specVal) {
+    // Treat hole change as a silent auto-save itself! No lag because it runs in the background.
+    saveAllScores(true).catch(err => console.error("Auto-save failed:", err));
+
+    if (specVal !== undefined) {
+      _currentHole = parseInt(specVal);
+    } else {
+      _currentHole = Math.max(1, Math.min(18, _currentHole + delta));
+    }
+    renderSingleHole();
+  }
+
+  function adjustSingleHoleScore(pid, delta) {
+    const inputEl = document.getElementById(`si-${pid}-${_currentHole}`);
+    if (!inputEl) return;
+
+    let currentVal = parseInt(inputEl.value) || 0;
+    const currentPar = _pars[_currentHole - 1];
+
+    let newVal;
+    if (currentVal === 0) {
+      // If no score was set, default to par when incrementing or decrementing!
+      newVal = currentPar;
+    } else {
+      newVal = currentVal + delta;
+    }
+
+    // Clamp score between 1 and 15, or if less than 1, set to empty
+    if (newVal < 1) {
+      newVal = '';
+    } else if (newVal > 15) {
+      newVal = 15;
+    }
+
+    inputEl.value = newVal;
+
+    // Trigger the existing onInput recalculation logic so all stats update
+    onInput(inputEl);
+
+    // Update the displays on the single hole UI in real-time
+    const valDisplay = document.getElementById(`sc-single-val-${pid}`);
+    if (valDisplay) {
+      valDisplay.textContent = newVal || '—';
+      // Apply the color classification
+      const scoreClass = newVal ? Scoring.classify(newVal, currentPar) : '';
+      valDisplay.className = `sc-single-score-display ${scoreClass}`;
+    }
+
+    // Update stableford points on single hole UI
+    const ptsDisplay = document.getElementById(`sc-single-pts-${pid}`);
+    if (ptsDisplay) {
+      const hcp = effectiveHcp(pid);
+      const shots = Scoring.shotsOnHole(hcp, _sis[_currentHole - 1]);
+      const pts = newVal ? Scoring.stablefordPoints(newVal, currentPar, shots) : 0;
+      ptsDisplay.textContent = newVal ? `${pts} pts` : '—';
+    }
+  }
+
+  function adjustSingleHoleLost(pid, delta) {
+    const inputEl = document.getElementById(`lost-${pid}-${_currentHole}`);
+    if (!inputEl) return;
+
+    let currentVal = parseInt(inputEl.value) || 0;
+    let newVal = Math.max(0, currentVal + delta); // Cannot lose negative balls
+
+    inputEl.value = newVal;
+
+    // Update single-hole view lost balls display
+    const lostDisplay = document.getElementById(`sc-single-lost-val-${pid}`);
+    if (lostDisplay) {
+      lostDisplay.textContent = newVal;
+    }
+
+    // Recalculate player total lost balls on the main grid
+    recalcPlayer(pid);
+  }
+
+  async function saveFromSingleHole() {
+    const btn = document.getElementById('sc-single-save-btn');
+    const originalText = btn ? btn.innerHTML : '💾 Save Scores';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = 'Saving…';
+    }
+    try {
+      await saveAllScores();
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+      }
+    }
+  }
+
+  return {
+    render,
+    destroy,
+    onInput,
+    resetAllScores,
+    toggleView,
+    renderSingleHole,
+    changeSingleHole,
+    adjustSingleHoleScore,
+    adjustSingleHoleLost,
+    saveFromSingleHole
+  };
 })();

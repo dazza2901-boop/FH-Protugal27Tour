@@ -38,6 +38,7 @@ const ScoreboardPage = (() => {
         <button class="tab-btn" data-tab="bingo"              onclick="ScoreboardPage.switchTab('bingo')">🎯 Birdie Bingo</button>
         <button class="tab-btn" data-tab="ntp"                onclick="ScoreboardPage.switchTab('ntp')">📍 Nearest Pin</button>
         <button class="tab-btn" data-tab="matchplay"          onclick="ScoreboardPage.switchTab('matchplay')">⚔️ Matchplay</button>
+        <button class="tab-btn" data-tab="lostballs"          onclick="ScoreboardPage.switchTab('lostballs')">🔴 Lost Balls</button>
       </div>
 
       <div id="sb-tour"        class="tab-content"></div>
@@ -47,6 +48,7 @@ const ScoreboardPage = (() => {
       <div id="sb-bingo"       class="tab-content hidden"></div>
       <div id="sb-ntp"         class="tab-content hidden"></div>
       <div id="sb-matchplay"   class="tab-content hidden"></div>
+      <div id="sb-lostballs"   class="tab-content hidden"></div>
     </div>`;
 
     _unsubs.forEach(u => u());
@@ -76,6 +78,7 @@ const ScoreboardPage = (() => {
     renderNTP();
     renderMatchplay();
     renderDailyFocus();
+    renderLostBalls();
   }
 
   // ── Helpers ──────────────────────────────────────────────
@@ -1228,6 +1231,89 @@ const ScoreboardPage = (() => {
         </div>
         ${ntpHtml}
       </div>`;
+  }
+
+  // ── Lost Balls Tab ───────────────────────────────────────
+  function renderLostBalls() {
+    const el = document.getElementById('sb-lostballs');
+    if (!el) return;
+
+    let overallTotal = 0;
+    const standings = Object.entries(_players).map(([pid, p]) => {
+      let total = 0;
+      const dayLost = {};
+      for (let d = 1; d <= DAYS; d++) {
+        const dayKey = `day${d}`;
+        const score = (_allScores[dayKey] || {})[pid];
+        let lost = 0;
+        if (score) {
+          if (score.lostBalls !== undefined) {
+            lost = Number(score.lostBalls);
+          } else {
+            // fallback: sum hole scores lost_h1 to lost_h18
+            for (let h = 1; h <= 18; h++) {
+              lost += Number(score[`lost_h${h}`] || 0);
+            }
+          }
+        }
+        dayLost[dayKey] = lost;
+        total += lost;
+      }
+      overallTotal += total;
+      const team = playerTeam(pid);
+      return {
+        pid,
+        name: p.name,
+        handicap: p.handicap,
+        total,
+        dayLost,
+        teamColor: team?.color
+      };
+    }).sort((a, b) => b.total - a.total); // Sort highest lost ball count to lowest
+
+    const dayHeaders = Array.from({length: DAYS}, (_, i) => {
+      const day = _schedule[`day${i+1}`];
+      return `<th style="text-align:right;font-size:0.75rem">${day?.label || `Day ${i+1}`}</th>`;
+    }).join('');
+
+    const rows = standings.map((s, idx) => {
+      const pos = idx + 1;
+      const dayTds = Array.from({length: DAYS}, (_, i) => {
+        const lost = s.dayLost[`day${i+1}`];
+        return `<td style="text-align:right;color:${lost > 0 ? '#b91c1c' : '#57606a'}">${lost > 0 ? lost : '<span class="text-muted">0</span>'}</td>`;
+      }).join('');
+      const dot = s.teamColor ? `<span class="team-color-dot" style="background:${s.teamColor}"></span>` : '';
+      return `<tr>
+        <td><span class="pos-badge" style="background:#fdf2f2;color:#b91c1c;font-weight:700">${pos}</span></td>
+        <td>${dot}${s.name}<br><span class="text-muted" style="font-size:0.72rem">HCP ${s.handicap ?? '?'}</span></td>
+        ${dayTds}
+        <td style="text-align:right;font-weight:700;color:#b91c1c;font-size:1.1rem;background:#fdf2f2">${s.total}</td>
+      </tr>`;
+    }).join('');
+
+    el.innerHTML = `
+      <!-- Bold Grand Total Banner -->
+      <div class="card" style="text-align:center;padding:20px 10px;background:#fdf2f2;border:1.5px solid #f5c2c2;border-radius:10px;margin-bottom:14px">
+        <div style="font-size:0.85rem;text-transform:uppercase;letter-spacing:1px;font-weight:700;color:#57606a;margin-bottom:4px">🔴 Total Balls Lost</div>
+        <div style="font-size:2.8rem;font-weight:900;color:#b91c1c;line-height:1">${overallTotal}</div>
+      </div>
+
+      <div class="card" style="overflow-x:auto;padding:12px 8px">
+        <div class="card-header" style="margin-bottom:12px">
+          <span class="card-title">🔴 Lost Balls Standings</span>
+          <span class="text-muted" style="font-size:0.78rem">Sorted by most balls lost</span>
+        </div>
+        <table class="scoreboard-table">
+          <thead><tr>
+            <th style="width:36px">#</th>
+            <th>Player</th>
+            ${dayHeaders}
+            <th style="text-align:right;background:#fdf2f2;color:#b91c1c">Total</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
   }
 
   // ── Set selected day for Daily Results Focus ─────────────

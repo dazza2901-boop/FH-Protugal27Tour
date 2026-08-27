@@ -737,3 +737,53 @@ body {
 .bb-bonus-tr td { background: #f7f8fa; border-top: 1px dashed #d0d7de; }
 .bb-bonus-td   { text-align: center; }
 
+
+/* ===== Single Hole Scoring View ===== */
+.sc-single-player-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 8px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.sc-single-player-row:last-child {
+  border-bottom: none;
+}
+.sc-single-adjust-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  border: 1.5px solid #d0d7de;
+  background: #f6f8fa;
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #1c1c1e;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  transition: background 0.15s, border-color 0.15s;
+}
+.sc-single-adjust-btn:active {
+  background: #e8edf2;
+  border-color: #57606a;
+}
+.sc-single-score-display {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  font-size: 1.25rem;
+  font-weight: 800;
+  border-radius: 6px;
+  text-align: center;
+}
+.sc-single-score-display.eagle  { background: #ffd700; color: #000; border: 1.5px solid #b89600 !important; }
+.sc-single-score-display.birdie { background: #1565c0; color: #fff; border: 1.5px solid #0d47a1 !important; }
+.sc-single-score-display.par    { background: #fff;    color: #000; border: 1.5px solid #d0d7de !important; }
+.sc-single-score-display.bogey  { background: #1a1a1a; color: #fff; border: 1.5px solid #000 !important; }
+.sc-single-score-display.double { background: #c62828; color: #fff; border: 1.5px solid #b71c1c !important; }
+.sc-single-score-display.triple { background: #6a1b9a; color: #fff; border: 1.5px solid #4a148c !important; }
