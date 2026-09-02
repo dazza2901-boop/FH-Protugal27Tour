@@ -321,22 +321,27 @@ const ScoreboardPage = (() => {
       const day = _schedule[dk];
       const fmt = day?.format;
       const fmtLabel = fmt === 'team' ? 'T' : fmt === 'singles' ? 'S' : fmt === 'pairs' ? 'P' : '—';
-      return `<th style="text-align:right;font-size:0.75rem;min-width:42px">D${i+1}<br><span style="font-weight:400;opacity:0.8">${fmtLabel}</span></th>`;
+      return `<th class="sb-tour-day-th">D${i+1}<br><span style="font-weight:400;opacity:0.8">${fmtLabel}</span></th>`;
     }).join('');
 
     const rows = standings.map((t, idx) => {
       const dayTds = Array.from({length: DAYS}, (_, i) => {
         const dk  = `day${i + 1}`;
         const pts = t.dayPts[dk];
-        // Only show a value once at least one score exists for this day
         const hasScores = Object.keys(_teams).some(tid2 =>
           (_teams[tid2].playerIds || []).some(pid => (_allScores[dk] || {})[pid]?.stableford != null)
         );
         const display = (hasScores && pts > 0) ? pts : '<span class="text-muted">—</span>';
-        return `<td style="text-align:right">${display}</td>`;
+        return `<td class="sb-tour-day-td">${display}</td>`;
       }).join('');
 
       const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
+      const bonusTotal = +(t.ntp + t.bingo + t.matchplay).toFixed(1);
+      const bonusDetail = [
+        t.ntp       > 0 ? `📍${t.ntp}`       : '',
+        t.bingo     > 0 ? `🎯${t.bingo}`     : '',
+        t.matchplay > 0 ? `⚔️${t.matchplay}` : '',
+      ].filter(Boolean).join(' ');
 
       return `<tr class="team-score-row">
         <td><span class="pos-badge pos-${idx < 3 ? idx + 1 : 'n'}">${idx + 1}</span></td>
@@ -346,9 +351,12 @@ const ScoreboardPage = (() => {
           <span class="text-muted" style="font-size:0.72rem;font-weight:400">${t.members.join(', ')}</span>
         </td>
         ${dayTds}
-        <td style="text-align:right;color:#57606a">${t.ntp > 0 ? '+' + t.ntp : '<span class="text-muted">—</span>'}</td>
-        <td style="text-align:right;color:#57606a">${t.bingo > 0 ? '+' + t.bingo : '<span class="text-muted">—</span>'}</td>
-        <td style="text-align:right;color:#57606a">${t.matchplay > 0 ? '+' + t.matchplay : '<span class="text-muted">—</span>'}</td>
+        <td class="sb-tour-ntp-td"  style="text-align:right;color:#57606a">${t.ntp       > 0 ? '+' + t.ntp       : '<span class="text-muted">—</span>'}</td>
+        <td class="sb-tour-bingo-td" style="text-align:right;color:#57606a">${t.bingo     > 0 ? '+' + t.bingo     : '<span class="text-muted">—</span>'}</td>
+        <td class="sb-tour-match-td" style="text-align:right;color:#57606a">${t.matchplay > 0 ? '+' + t.matchplay : '<span class="text-muted">—</span>'}</td>
+        <td class="sb-tour-bonus-td" style="text-align:right;color:#57606a">
+          ${bonusTotal > 0 ? `<span style="font-weight:700">+${bonusTotal}</span>${bonusDetail ? `<br><span style="font-size:0.65rem;font-weight:400">${bonusDetail}</span>` : ''}` : '<span class="text-muted">—</span>'}
+        </td>
         <td style="text-align:right;font-weight:700;color:#1a5c2a;font-size:1.05rem">${t.total > 0 ? t.total : '<span class="text-muted">—</span>'}</td>
       </tr>`;
     }).join('');
@@ -366,15 +374,16 @@ const ScoreboardPage = (() => {
       </div>`;
 
     el.innerHTML = `
-      <div class="card" style="overflow-x:auto">
-        <table class="scoreboard-table">
+      <div class="card sb-tour-card">
+        <table class="scoreboard-table sb-tour-table">
           <thead><tr>
-            <th style="width:36px">#</th>
+            <th class="sb-tour-pos-th">#</th>
             <th>Team</th>
             ${dayHeaders}
-            <th style="text-align:right;font-size:0.75rem;min-width:42px">📍<br>NTP</th>
-            <th style="text-align:right;font-size:0.75rem;min-width:42px">🎯<br>Bingo</th>
-            <th style="text-align:right;font-size:0.75rem;min-width:42px">⚔️<br>Match</th>
+            <th class="sb-tour-day-th sb-tour-ntp-th">📍<br><span style="font-weight:400;font-size:0.7rem">NTP</span></th>
+            <th class="sb-tour-day-th sb-tour-bingo-th">🎯<br><span style="font-weight:400;font-size:0.7rem">Bingo</span></th>
+            <th class="sb-tour-day-th sb-tour-match-th">⚔️<br><span style="font-weight:400;font-size:0.7rem">Match</span></th>
+            <th class="sb-tour-bonus-th">+<br><span style="font-weight:400;font-size:0.7rem">Bonus</span></th>
             <th style="text-align:right">Total</th>
           </tr></thead>
           <tbody>${rows}</tbody>

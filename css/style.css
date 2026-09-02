@@ -443,6 +443,32 @@ body {
   box-shadow: 0 -2px 0 #1c1c1e inset;
 }
 
+/* ===== Tour Results table ===== */
+.sb-tour-card {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 16px 0 16px 16px; /* let table bleed right so scroll is obvious */
+  /* right-edge fade hint */
+  background:
+    linear-gradient(to right, #fff 0%, transparent 8%) left,
+    linear-gradient(to left,  #fff 0%, transparent 8%) right;
+  background-size: 32px 100%;
+  background-attachment: local, local;
+  background-repeat: no-repeat;
+}
+.sb-tour-table {
+  min-width: 480px; /* enough to fit; will scroll on narrow phones */
+}
+.sb-tour-pos-th  { width: 32px; }
+.sb-tour-day-th  { text-align: right; font-size: 0.75rem; width: 38px; }
+.sb-tour-day-td  { text-align: right; }
+/* Individual bonus columns shown on desktop, hidden on mobile */
+.sb-tour-ntp-th, .sb-tour-ntp-td,
+.sb-tour-bingo-th, .sb-tour-bingo-td,
+.sb-tour-match-th, .sb-tour-match-td { display: table-cell; }
+/* Combined bonus column hidden on desktop, shown on mobile */
+.sb-tour-bonus-th, .sb-tour-bonus-td { display: none; }
+
 /* ===== Responsive — iPhone ===== */
 @media (max-width: 480px) {
 
@@ -492,6 +518,14 @@ body {
 
   /* Leaderboard key badges */
   .tag { font-size: 0.72rem; padding: 2px 6px; }
+
+  /* Tour table — swap 3 bonus cols for 1 combined col on mobile */
+  .sb-tour-ntp-th, .sb-tour-ntp-td,
+  .sb-tour-bingo-th, .sb-tour-bingo-td,
+  .sb-tour-match-th, .sb-tour-match-td { display: none; }
+  .sb-tour-bonus-th, .sb-tour-bonus-td { display: table-cell; }
+  .sb-tour-day-th  { width: 30px; font-size: 0.7rem; }
+  .sb-tour-table   { min-width: 360px; }
 }
 
 /* ===== 4-ball Scorecard Grid ===== */
