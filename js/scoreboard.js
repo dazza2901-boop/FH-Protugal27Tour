@@ -190,10 +190,29 @@ const ScoreboardPage = (() => {
     Object.keys(_teams).forEach(tid => { result[tid] = 0; });
 
     if (format === 'team') {
-      // Rank teams by their stableford aggregate — only award if at least one team has scored
+      // Rank teams by their stableford aggregate with countback tiebreak.
+      // holePts for a team = best-2-on-par3/4, best-3-on-par5 per hole (mirrors teamDayScore).
+      const { pars, sis } = dayParsAndSIs(dayKey);
       const ranked = Object.entries(_teams)
-        .map(([tid, team]) => ({ tid, pts: teamDayScore(team, dayKey) }))
-        .sort((a, b) => b.pts - a.pts);
+        .map(([tid, team]) => {
+          const memberIds = team.playerIds || [];
+          let pts = 0;
+          const holePts = Array.from({length: 18}, (_, i) => {
+            const hole = i + 1;
+            const hPts = memberIds.map(pid => {
+              const gross = (dayScores[pid] || {})[`h${hole}`] || 0;
+              if (!gross) return 0;
+              return Scoring.stablefordPoints(gross, pars[i], Scoring.shotsOnHole(effectiveHcp(pid, dayKey), sis[i]));
+            }).sort((a, b) => b - a);
+            const count = pars[i] === 5 ? 3 : 2;
+            let holeTotal = 0;
+            for (let k = 0; k < count; k++) holeTotal += hPts[k] || 0;
+            pts += holeTotal;
+            return holeTotal;
+          });
+          return { tid, pts, total: pts, holePts };
+        })
+        .sort((a, b) => Scoring.countbackSort(a, b));
       if (ranked.some(e => e.pts > 0)) {
         ranked.forEach((entry, idx) => {
           result[entry.tid] = (result[entry.tid] || 0) + (TOUR_PTS_TEAM[idx] || 0);
@@ -204,11 +223,12 @@ const ScoreboardPage = (() => {
       // Rank all players individually with countback; award tour pts then credit their team
       const { pars, sis } = dayParsAndSIs(dayKey);
       const ranked = Object.entries(_players)
-        .map(([pid, p]) => {
+        .map(([pid]) => {
           const sc = dayScores[pid] || {};
           const total = sc.stableford || 0;
           const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
-          const holePts = Scoring.holePoints(scores, pars, sis, _players[pid]?.handicap || 0);
+          // Use day-specific handicap for countback hole points (same as scorecard uses)
+          const holePts = Scoring.holePoints(scores, pars, sis, effectiveHcp(pid, dayKey));
           return { pid, total, holePts };
         })
         .filter(e => e.total > 0)
@@ -220,29 +240,32 @@ const ScoreboardPage = (() => {
 
     } else if (format === 'pairs') {
       // Build pairs from schedule groupings (consecutive within each group).
-      // Then rank all pairs globally and credit their shared team.
+      // Rank all pairs globally with countback tiebreak; credit their shared team.
       const playerTidMap = {};
       Object.entries(_teams).forEach(([tid, team]) => {
         (team.playerIds || []).forEach(pid => { playerTidMap[pid] = tid; });
       });
-      const pairs = [];
+      const { pars, sis } = dayParsAndSIs(dayKey);
+      const rankedPairs = [];
       dayPairs(dayKey).forEach(([p1, p2]) => {
         const tid = playerTidMap[p1];
         if (!tid || playerTidMap[p2] !== tid) return; // cross-team pair (shouldn't happen)
-        const { pars, sis } = dayParsAndSIs(dayKey);
         let pts = 0;
-        for (let hole = 1; hole <= 18; hole++) {
-          const i = hole - 1;
+        // holePts for countback = best-of-two stableford per hole (mirrors recalcPairs)
+        const holePts = Array.from({length: 18}, (_, i) => {
+          const hole = i + 1;
           const g1 = dayScores[p1]?.[`h${hole}`] || 0;
           const g2 = dayScores[p2]?.[`h${hole}`] || 0;
           const s1 = g1 ? Scoring.stablefordPoints(g1, pars[i], Scoring.shotsOnHole(effectiveHcp(p1, dayKey), sis[i])) : 0;
           const s2 = g2 ? Scoring.stablefordPoints(g2, pars[i], Scoring.shotsOnHole(effectiveHcp(p2, dayKey), sis[i])) : 0;
-          pts += Math.max(s1, s2);
-        }
-        if (pts > 0) pairs.push({ tid, pts });
+          const best = Math.max(s1, s2);
+          pts += best;
+          return best;
+        });
+        if (pts > 0) rankedPairs.push({ tid, pts, total: pts, holePts });
       });
-      pairs.sort((a, b) => b.pts - a.pts);
-      pairs.forEach((pair, idx) => {
+      rankedPairs.sort((a, b) => Scoring.countbackSort(a, b));
+      rankedPairs.forEach((pair, idx) => {
         result[pair.tid] = (result[pair.tid] || 0) + (TOUR_PTS_PAIRS[idx] || 0);
       });
     }
@@ -370,7 +393,18 @@ const ScoreboardPage = (() => {
         matchplay,
         total:   +(dayTotal + ntp + bingo + matchplay).toFixed(1)
       };
-    }).sort((a, b) => b.total - a.total);
+    // Tiebreak tour standings by total stableford aggregate across all days
+    }).sort((a, b) => {
+      if (b.total !== a.total) return b.total - a.total;
+      // Secondary: total raw stableford across all days (team aggregate)
+      let aggA = 0, aggB = 0;
+      for (let d = 1; d <= DAYS; d++) {
+        const dk = `day${d}`;
+        aggA += teamDayScore(_teams[a.tid], dk);
+        aggB += teamDayScore(_teams[b.tid], dk);
+      }
+      return aggB - aggA;
+    });
 
     // Day header columns — clean D1…D5 only
     const dayHeaders = Array.from({length: DAYS}, (_, i) =>
@@ -1313,19 +1347,42 @@ const ScoreboardPage = (() => {
     const dayFmt = day.format || 'singles';
 
     if (dayFmt === 'team') {
-      // ── Team day: rank teams by team score ──
+      // ── Team day: rank teams by team score with countback tiebreak ──
+      const { pars: tPars, sis: tSis } = dayParsAndSIs(dayKey);
       const standings = teamEntries
-        .map(([tid, team]) => ({ team, score: teamDayScore(team, dayKey) }))
+        .map(([tid, team]) => {
+          const memberIds = team.playerIds || [];
+          let score = 0;
+          const holePts = Array.from({length: 18}, (_, i) => {
+            const hole = i + 1;
+            const hPts = memberIds.map(pid => {
+              const gross = (dayScores[pid] || {})[`h${hole}`] || 0;
+              if (!gross) return 0;
+              return Scoring.stablefordPoints(gross, tPars[i], Scoring.shotsOnHole(effectiveHcp(pid, dayKey), tSis[i]));
+            }).sort((a, b) => b - a);
+            const count = tPars[i] === 5 ? 3 : 2;
+            let holeTotal = 0;
+            for (let k = 0; k < count; k++) holeTotal += hPts[k] || 0;
+            score += holeTotal;
+            return holeTotal;
+          });
+          return { team, score, total: score, holePts };
+        })
         .filter(t => t.score > 0)
-        .sort((a, b) => b.score - a.score);
+        .sort((a, b) => Scoring.countbackSort(a, b));
 
       if (standings.length > 0) {
         const lbRows = standings.map((t, idx) => {
           const tourPts = TOUR_PTS_TEAM[idx] || 0;
+          const prevTied = idx > 0 && standings[idx-1].total === t.total && Scoring.countbackCompare(standings[idx-1].holePts||[], t.holePts||[]) === 0;
+          const nextTied = idx < standings.length-1 && standings[idx+1].total === t.total && Scoring.countbackCompare(t.holePts||[], standings[idx+1].holePts||[]) === 0;
+          const isTied = prevTied || nextTied;
+          const posLabel = isTied ? `T${idx+1}` : medals[idx] || `${idx+1}`;
+          const cbInfo = isTied ? `<span style="font-size:0.68rem;color:#57606a;display:block;margin-top:2px">${Scoring.countbackLabel(t.holePts||[])}</span>` : '';
           return `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;${idx < standings.length - 1 ? 'border-bottom:1px solid #e5e7eb;' : ''}">
-            <span style="font-size:1.4rem;width:28px;text-align:center;flex-shrink:0">${medals[idx] || ''}</span>
+            <span style="font-size:${isTied ? '0.85rem' : '1.4rem'};width:28px;text-align:center;flex-shrink:0;font-weight:${isTied ? '700' : 'normal'}">${posLabel}</span>
             <span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${t.team.color};flex-shrink:0"></span>
-            <span style="font-weight:700;font-size:1rem;flex:1">${t.team.name}</span>
+            <span style="font-weight:700;font-size:1rem;flex:1">${t.team.name}${cbInfo}</span>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:72px">
               <span style="font-weight:900;font-size:1.6rem;color:#1a5c2a;line-height:1">${t.score}</span>
               ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:12px;white-space:nowrap">+${tourPts} pts</span>` : '<span style="font-size:0.72rem;color:transparent">—</span>'}
@@ -1353,27 +1410,35 @@ const ScoreboardPage = (() => {
       const pairStandings = allPairs.map(([pidA, pidB]) => {
         const team = _teams[playerTidMap[pidA]];
         let score = 0;
-        for (let hole = 1; hole <= 18; hole++) {
-          const i = hole - 1;
+        const holePts = Array.from({length: 18}, (_, i) => {
+          const hole = i + 1;
           const gA = dayScores[pidA]?.[`h${hole}`] || 0;
           const gB = dayScores[pidB]?.[`h${hole}`] || 0;
           const sA = gA ? Scoring.stablefordPoints(gA, pars[i], Scoring.shotsOnHole(effectiveHcp(pidA, dayKey), sis[i])) : 0;
           const sB = gB ? Scoring.stablefordPoints(gB, pars[i], Scoring.shotsOnHole(effectiveHcp(pidB, dayKey), sis[i])) : 0;
-          score += Math.max(sA, sB);
-        }
+          const best = Math.max(sA, sB);
+          score += best;
+          return best;
+        });
         const nameA = firstName(_players[pidA]?.name) || pidA;
         const nameB = firstName(_players[pidB]?.name) || pidB;
-        return { team, score, label: `${nameA} & ${nameB}` };
-      }).filter(p => p.score > 0).sort((a, b) => b.score - a.score);
+        return { team, score, total: score, holePts, label: `${nameA} & ${nameB}` };
+      }).filter(p => p.score > 0).sort((a, b) => Scoring.countbackSort(a, b));
 
       if (pairStandings.length > 0) {
         const lbRows = pairStandings.map((p, idx) => {
           const tourPts = TOUR_PTS_PAIRS[idx] || 0;
           const color = p.team?.color || '#ccc';
+          // Tied detection: same total and countback still draws
+          const prevTied = idx > 0 && pairStandings[idx-1].total === p.total && Scoring.countbackCompare(pairStandings[idx-1].holePts||[], p.holePts||[]) === 0;
+          const nextTied = idx < pairStandings.length-1 && pairStandings[idx+1].total === p.total && Scoring.countbackCompare(p.holePts||[], pairStandings[idx+1].holePts||[]) === 0;
+          const isTied = prevTied || nextTied;
+          const posLabel = isTied ? `T${idx+1}` : medals[idx] || `${idx+1}`;
+          const cbInfo = isTied ? `<span style="font-size:0.68rem;color:#57606a;display:block;margin-top:2px">${Scoring.countbackLabel(p.holePts||[])}</span>` : '';
           return `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;${idx < pairStandings.length - 1 ? 'border-bottom:1px solid #e5e7eb;' : ''}">
-            <span style="font-size:1.4rem;width:28px;text-align:center;flex-shrink:0">${medals[idx] || ''}</span>
+            <span style="font-size:${isTied ? '0.85rem' : '1.4rem'};width:28px;text-align:center;flex-shrink:0;font-weight:${isTied ? '700' : 'normal'}">${posLabel}</span>
             <span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${color};flex-shrink:0"></span>
-            <span style="font-weight:700;font-size:1rem;flex:1">${p.label}</span>
+            <span style="font-weight:700;font-size:1rem;flex:1">${p.label}${cbInfo}</span>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:72px">
               <span style="font-weight:900;font-size:1.6rem;color:#1a5c2a;line-height:1">${p.score}</span>
               ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:12px;white-space:nowrap">+${tourPts} pts</span>` : '<span style="font-size:0.72rem;color:transparent">—</span>'}
