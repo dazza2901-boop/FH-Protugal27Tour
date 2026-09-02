@@ -638,9 +638,16 @@ const ScoreboardPage = (() => {
     // ── Vertical card per team ───────────────────────────────
     const teamCards = teamData.map(({ team, holeHit, front9Hit, back9Hit, totalHit, bonusFront, bonusBack, bonusFull, bonusTotal, grandTotal }) => {
       const makeChips = (startIdx) => Array.from({length: 9}, (_, i) => {
-        const hi  = startIdx + i;
-        const hit = holeHit[hi];
-        const cls = hit ? 'bb-chip-green' : 'bb-chip-empty';
+        const hi       = startIdx + i;
+        const hit      = holeHit[hi];
+        const isFront  = hi < 9;
+        const lineComplete = isFront ? bonusFront : bonusBack;
+        let cls = 'bb-chip-empty';
+        if (hit) {
+          if (bonusFull)       cls = 'bb-chip-green';
+          else if (lineComplete) cls = 'bb-chip-amber';
+          else                 cls = 'bb-chip-blue';
+        }
         return `<div class="bb-chip ${cls}">${hi + 1}${hit ? '<span class="bb-tick">✓</span>' : ''}</div>`;
       }).join('');
 

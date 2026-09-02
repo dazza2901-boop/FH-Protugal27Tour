@@ -505,7 +505,9 @@ body {
   flex-shrink: 0;
 }
 .bb-chip-empty  { background: #6b7280; color: #d1d5db; }
-.bb-chip-green  { background: #1a5c2a; color: #fff; }
+.bb-chip-blue   { background: #3b82f6; color: #fff; }
+.bb-chip-amber  { background: #f59e0b; color: #fff; }
+.bb-chip-green  { background: #16a34a; color: #fff; }
 .bb-tick {
   position: absolute;
   top: -4px;
