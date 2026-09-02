@@ -1137,6 +1137,17 @@ const ScoreboardPage = (() => {
 
       if (members.length === 0) return '';
 
+      // Team total uses the format-aware teamDayScore (sum for singles/pairs, best-ball for team)
+      const teamTotal = teamDayScore(team, dayKey);
+
+      // Label for what the total represents per format
+      const fmt = day.format || 'singles';
+      const totalLabel = fmt === 'team'
+        ? 'Team score'
+        : fmt === 'pairs'
+          ? 'Pairs total'
+          : 'Team total';
+
       const rows = members.map((m, idx) => {
         const zoneBadge = idx === 0
           ? `<span style="font-size:1rem">🥇</span>`
@@ -1153,13 +1164,19 @@ const ScoreboardPage = (() => {
         </tr>`;
       }).join('');
 
+      const totalRow = `<tr style="border-top:2px solid #e5e7eb;background:#f7f8fa">
+        <td style="padding:7px 10px"></td>
+        <td style="padding:7px 10px;font-size:0.78rem;color:#57606a;font-weight:600">${totalLabel}</td>
+        <td style="padding:7px 10px;text-align:right;font-weight:800;font-size:1.1rem;color:#1a5c2a">${teamTotal}</td>
+      </tr>`;
+
       return `<div style="margin-bottom:14px">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
           <span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${team.color};flex-shrink:0"></span>
           <span style="font-weight:700;font-size:0.95rem">${team.name}</span>
         </div>
         <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
-          <tbody>${rows}</tbody>
+          <tbody>${rows}${totalRow}</tbody>
         </table>
       </div>`;
     }).join('') || '<p class="text-muted">No scores recorded yet for this day.</p>';
