@@ -165,7 +165,7 @@ const SchedulePage = (() => {
     _unsubP = DB.on('players',  d => { _players  = d || {}; renderList(); });
     _unsubT = DB.on('teams',    d => { _teams    = d || {}; renderList(); });
     _unsub  = DB.on('schedule', d => { _schedule = d || {}; renderList(); });
-    _unsubC = DB.on('courses',  d => { _courses  = d || {}; renderCourseList(); populateCourseSelect(); });
+    _unsubC = DB.on('courses',  d => { _courses  = d || {}; renderList(); renderCourseList(); populateCourseSelect(); });
   }
 
   // ── Schedule list ────────────────────────────────────────
