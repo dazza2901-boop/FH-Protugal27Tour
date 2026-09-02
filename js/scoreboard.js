@@ -155,11 +155,18 @@ const ScoreboardPage = (() => {
       }
 
     } else if (format === 'singles') {
-      // Rank all players individually; award tour pts then credit their team
+      // Rank all players individually with countback; award tour pts then credit their team
+      const { pars, sis } = dayParsAndSIs(dayKey);
       const ranked = Object.entries(_players)
-        .map(([pid, p]) => ({ pid, pts: dayScores[pid]?.stableford || 0 }))
-        .filter(e => e.pts > 0)
-        .sort((a, b) => b.pts - a.pts);
+        .map(([pid, p]) => {
+          const sc = dayScores[pid] || {};
+          const total = sc.stableford || 0;
+          const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
+          const holePts = Scoring.holePoints(scores, pars, sis, _players[pid]?.handicap || 0);
+          return { pid, total, holePts };
+        })
+        .filter(e => e.total > 0)
+        .sort((a, b) => Scoring.countbackSort(a, b));
       ranked.forEach((entry, idx) => {
         const team = playerTeam(entry.pid);
         if (team) result[team.tid] = (result[team.tid] || 0) + (TOUR_PTS_SINGLES[idx] || 0);
@@ -440,19 +447,33 @@ const ScoreboardPage = (() => {
     const el = document.getElementById('sb-individual');
     if (!el) return;
 
+    // For overall standings we sort by total; ties are broken by the most recent day's countback
     const standings = Object.entries(_players).map(([pid, p]) => {
       let total = 0;
       const dayPts = {};
+      // Track per-day holePts arrays for countback on last scored day
+      const dayHolePts = {};
       for (let d = 1; d <= DAYS; d++) {
-        const dayKey = `day${d}`;
-        const pts    = (_allScores[dayKey] || {})[pid]?.stableford ?? null;
-        dayPts[dayKey] = pts;
-        total += pts || 0;
+        const dayKey       = `day${d}`;
+        const sc           = (_allScores[dayKey] || {})[pid];
+        const pts          = sc?.stableford ?? null;
+        dayPts[dayKey]     = pts;
+        total             += pts || 0;
+        if (pts) {
+          const { pars, sis } = dayParsAndSIs(dayKey);
+          const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
+          dayHolePts[dayKey] = Scoring.holePoints(scores, pars, sis, p.handicap || 0);
+        }
+      }
+      // Use the last day with scores as the countback reference
+      let holePts = null;
+      for (let d = DAYS; d >= 1; d--) {
+        if (dayHolePts[`day${d}`]) { holePts = dayHolePts[`day${d}`]; break; }
       }
       const team = playerTeam(pid);
-      return { pid, name: p.name, handicap: p.handicap, total, dayPts,
+      return { pid, name: p.name, handicap: p.handicap, total, dayPts, holePts,
                teamName: team?.name, teamColor: team?.color };
-    }).sort((a, b) => b.total - a.total);
+    }).sort((a, b) => Scoring.countbackSort(a, b));
 
     if (standings.length === 0) {
       el.innerHTML = '<p class="center-msg">No scores yet.</p>';
@@ -465,14 +486,29 @@ const ScoreboardPage = (() => {
     }).join('');
 
     const rows = standings.map((s, idx) => {
-      const pos = idx + 1;
+      // Determine tied position
+      const prevSame = idx > 0 && standings[idx - 1].total === s.total &&
+                       Scoring.countbackCompare(standings[idx - 1].holePts || [], s.holePts || []) === 0;
+      const nextSame = idx < standings.length - 1 && standings[idx + 1].total === s.total &&
+                       Scoring.countbackCompare(s.holePts || [], standings[idx + 1].holePts || []) === 0;
+      const isTied   = prevSame || nextSame;
+      // Find the first tied position for this group
+      let pos = idx + 1;
+      if (isTied) {
+        let g = idx;
+        while (g > 0 && standings[g - 1].total === s.total &&
+               Scoring.countbackCompare(standings[g - 1].holePts || [], s.holePts || []) === 0) g--;
+        pos = g + 1;
+      }
+      const posLabel = isTied ? `T${pos}` : `${pos}`;
+      const posCls   = !isTied && pos <= 3 ? pos : 'n';
       const dayTds = Array.from({length: DAYS}, (_, i) => {
         const pts = s.dayPts[`day${i+1}`];
         return `<td style="text-align:right">${(pts !== null && pts > 0) ? pts : '<span class="text-muted">—</span>'}</td>`;
       }).join('');
       const dot = s.teamColor ? `<span class="team-color-dot" style="background:${s.teamColor}"></span>` : '';
       return `<tr>
-        <td><span class="pos-badge pos-${pos <= 3 ? pos : 'n'}">${pos}</span></td>
+        <td><span class="pos-badge pos-${posCls}" style="${isTied ? 'font-size:0.65rem;' : ''}">${posLabel}</span></td>
         <td>${dot}${s.name}<br><span class="text-muted" style="font-size:0.72rem">HCP ${s.handicap??'?'}</span></td>
         ${dayTds}
         <td style="text-align:right;font-weight:700;color:#1a5c2a;font-size:1rem">${s.total}</td>
@@ -1092,14 +1128,17 @@ const ScoreboardPage = (() => {
     const teamEntries   = Object.entries(_teams);
 
     // ── Scoring zone breakdown per team ─────────────────────
-    // For each team, list their members' stableford pts ranked, then assign
+    // For each team, list their members' stableford pts ranked (with countback), then assign
     // a visual zone: 🥇 Top scorer, 🥈 2nd, 🥉 3rd, rest = normal
     const teamBlocks = teamEntries.map(([tid, team]) => {
       const members = (team.playerIds || []).map(pid => {
-        const p   = _players[pid];
-        const pts = dayScores[pid]?.stableford ?? null;
-        return { name: p?.name || pid, pts };
-      }).filter(m => m.pts !== null && m.pts > 0).sort((a, b) => b.pts - a.pts);
+        const p      = _players[pid];
+        const sc     = dayScores[pid] || {};
+        const total  = sc.stableford ?? null;
+        const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
+        const holePts = total ? Scoring.holePoints(scores, pars, sis, p?.handicap || 0) : null;
+        return { name: p?.name || pid, total, pts: total, holePts };
+      }).filter(m => m.total !== null && m.total > 0).sort((a, b) => Scoring.countbackSort(a, b));
 
       if (members.length === 0) return '';
 
@@ -1130,21 +1169,42 @@ const ScoreboardPage = (() => {
       </div>`;
     }).join('') || '<p class="text-muted">No scores recorded yet for this day.</p>';
 
-    // ── Overall day ranking (all players) ───────────────────
+    // ── Overall day ranking (all players) — with countback ──
     const allEntries = Object.entries(_players)
       .map(([pid, p]) => {
-        const t = playerTeam(pid);
-        return { name: p.name, pts: dayScores[pid]?.stableford ?? null, teamColor: t?.color, teamName: t?.name };
+        const sc    = dayScores[pid] || {};
+        const total = sc.stableford ?? null;
+        const t     = playerTeam(pid);
+        const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
+        const holePts = total ? Scoring.holePoints(scores, pars, sis, p.handicap || 0) : null;
+        return { pid, name: p.name, total, holePts, teamColor: t?.color, teamName: t?.name };
       })
-      .filter(e => e.pts !== null && e.pts > 0)
-      .sort((a, b) => b.pts - a.pts);
+      .filter(e => e.total !== null && e.total > 0)
+      .sort((a, b) => Scoring.countbackSort(a, b));
 
     const rankingRows = allEntries.map((e, idx) => {
+      // Tied position logic
+      const prevSame = idx > 0 && allEntries[idx - 1].total === e.total &&
+                       Scoring.countbackCompare(allEntries[idx - 1].holePts || [], e.holePts || []) === 0;
+      const nextSame = idx < allEntries.length - 1 && allEntries[idx + 1].total === e.total &&
+                       Scoring.countbackCompare(e.holePts || [], allEntries[idx + 1].holePts || []) === 0;
+      const isTied   = prevSame || nextSame;
+      let pos = idx + 1;
+      if (isTied) {
+        let g = idx;
+        while (g > 0 && allEntries[g - 1].total === e.total &&
+               Scoring.countbackCompare(allEntries[g - 1].holePts || [], e.holePts || []) === 0) g--;
+        pos = g + 1;
+      }
+      const posLabel = isTied ? `T${pos}` : `${pos}`;
+      const posCls   = !isTied && pos <= 3 ? pos : 'n';
+      const cbInfo   = isTied && e.holePts
+        ? `<span class="text-muted" style="font-size:0.68rem;display:block;margin-top:1px">${Scoring.countbackLabel(e.holePts)}</span>` : '';
       const dot = e.teamColor ? `<span style="display:inline-block;width:9px;height:9px;border-radius:50%;background:${e.teamColor};margin-right:5px;vertical-align:middle"></span>` : '';
       return `<tr>
-        <td style="padding:7px 10px"><span class="pos-badge pos-${idx<3?idx+1:'n'}">${idx+1}</span></td>
-        <td style="padding:7px 10px">${dot}${e.name}<br><span class="text-muted" style="font-size:0.72rem">${e.teamName||''}</span></td>
-        <td style="padding:7px 10px;text-align:right;font-weight:700;color:#1a2332;font-size:1rem">${e.pts}</td>
+        <td style="padding:7px 10px"><span class="pos-badge pos-${posCls}" style="${isTied ? 'font-size:0.65rem;' : ''}">${posLabel}</span></td>
+        <td style="padding:7px 10px">${dot}${e.name}<br><span class="text-muted" style="font-size:0.72rem">${e.teamName||''}</span>${cbInfo}</td>
+        <td style="padding:7px 10px;text-align:right;font-weight:700;color:#1a2332;font-size:1rem">${e.total}</td>
       </tr>`;
     }).join('');
 

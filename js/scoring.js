@@ -92,5 +92,65 @@ const Scoring = {
 
   defaultPars() {
     return [...HOLE_PARS];
+  },
+
+  // ── Countback tiebreak (standard golf) ──────────────────
+  // Returns an array[18] of Stableford points for each hole.
+  // scores  = array[18] of gross scores (0 = NR)
+  // pars    = array[18] of hole pars
+  // sis     = array[18] of stroke indexes
+  // handicap = course handicap
+  holePoints(scores, pars, sis, handicap) {
+    return Array.from({ length: 18 }, (_, i) => {
+      if (!scores[i]) return 0;
+      const shots = Scoring.shotsOnHole(handicap, sis[i]);
+      return Scoring.stablefordPoints(scores[i], pars[i], shots);
+    });
+  },
+
+  // Sum Stableford points over a slice of holes (0-based indices).
+  _sumSlice(pts, from, to) {
+    let s = 0;
+    for (let i = from; i < to; i++) s += (pts[i] || 0);
+    return s;
+  },
+
+  // Compare two players using standard golf countback (Stableford):
+  //   1. Back 9  (holes 10–18, indices 9–17)
+  //   2. Back 6  (holes 13–18, indices 12–17)
+  //   3. Back 3  (holes 16–18, indices 15–17)
+  //   4. Last hole (hole 18,   index 17)
+  //
+  // ptsA / ptsB = holePoints() arrays for each player.
+  // Returns negative if A wins tiebreak, positive if B wins, 0 if still tied.
+  countbackCompare(ptsA, ptsB) {
+    const slices = [
+      [9, 18],   // back 9
+      [12, 18],  // back 6
+      [15, 18],  // back 3
+      [17, 18],  // last hole
+    ];
+    for (const [from, to] of slices) {
+      const diff = Scoring._sumSlice(ptsB, from, to) - Scoring._sumSlice(ptsA, from, to);
+      if (diff !== 0) return diff;   // higher Stableford wins (lower diff = A wins)
+    }
+    return 0; // cannot separate — dead heat
+  },
+
+  // Build a human-readable countback label for display:
+  // e.g. "B9 18 · B6 12 · B3 6 · H18 2"
+  countbackLabel(pts) {
+    const b9  = Scoring._sumSlice(pts, 9, 18);
+    const b6  = Scoring._sumSlice(pts, 12, 18);
+    const b3  = Scoring._sumSlice(pts, 15, 18);
+    const h18 = pts[17] || 0;
+    return `B9 ${b9} · B6 ${b6} · B3 ${b3} · H18 ${h18}`;
+  },
+
+  // Convenience: sort comparator — safe to use directly in .sort() callbacks.
+  // Sorts by total descending, then countback on .holePts.
+  countbackSort(a, b) {
+    if (a.total !== b.total) return b.total - a.total;
+    return Scoring.countbackCompare(a.holePts || [], b.holePts || []);
   }
 };

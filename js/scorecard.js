@@ -992,6 +992,7 @@ const ScorecardPage = (() => {
     render,
     destroy,
     onInput,
+    saveAllScores,
     resetAllScores,
     toggleView,
     renderSingleHole,
