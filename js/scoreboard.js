@@ -594,11 +594,11 @@ const ScoreboardPage = (() => {
         return `<td class="ind-day-td">${(pts !== null && pts > 0) ? pts : '<span class="text-muted">—</span>'}</td>`;
       }).join('');
       const dot = s.teamColor ? `<span class="team-color-dot" style="background:${s.teamColor}"></span>` : '';
-      return `<tr>
+      return `<tr style="cursor:pointer" onclick="ScoreboardPage.showPlayerDetail('${s.pid}')">
         <td><span class="pos-badge pos-${posCls}" style="${isTied ? 'font-size:0.65rem;' : ''}">${posLabel}</span></td>
         <td>${dot}${s.name}<br><span class="text-muted" style="font-size:0.72rem">HCP ${s.handicap??'?'}</span></td>
         ${dayTds}
-        <td class="ind-total-td">${s.total}</td>
+        <td class="ind-total-td">${s.total} <span style="font-size:0.65rem;color:#aaa;vertical-align:middle">›</span></td>
       </tr>`;
     }).join('');
 
@@ -1505,7 +1505,7 @@ const ScoreboardPage = (() => {
       <!-- Day info banner -->
       <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;padding:10px 14px;background:#f7f8fa;border-radius:8px;border:1px solid #e5e7eb">
         <span class="day-badge">${dayKey.replace('day','Day ')}</span>
-        <span style="font-weight:700">${day.label || dayKey.replace('day','Day ')}</span>
+        <span style="font-weight:700">${_courses[day.courseId]?.name || day.label || dayKey.replace('day','Day ')}</span>
         <span class="format-badge format-${day.format || ''}" style="margin-left:auto">${fmt}</span>
       </div>
 
@@ -1629,6 +1629,172 @@ const ScoreboardPage = (() => {
     `;
   }
 
+  // ── Player detail overlay ─────────────────────────────────
+  // Shows a full-screen overlay with gross scores + stableford scores
+  // for each day the player has played, colour-coded like the scorecard.
+  function showPlayerDetail(pid) {
+    const p = _players[pid];
+    if (!p) return;
+
+    const team    = playerTeam(pid);
+    const teamDot = team ? `<span style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${team.color};margin-right:6px;vertical-align:middle;flex-shrink:0"></span>` : '';
+
+    // Cell styles — defined once, reused across all day tables
+    const CELL = 'text-align:center;padding:4px 2px;font-size:0.75rem;border:1px solid #e5e7eb';
+    const HDR  = `${CELL};background:#f7f8fa;color:#57606a;font-weight:600;font-size:0.68rem`;
+    const LBL  = `${CELL};text-align:left;font-weight:600;font-size:0.72rem;white-space:nowrap;background:#fafafa;padding-left:6px`;
+    const SUB  = `${CELL};background:#f0f4ff;font-weight:700`;
+
+    // Colgroup for a 9-hole half (label col + 9 hole cols + subtotal col)
+    const colgroup9 = `<colgroup>
+      <col style="width:46px">
+      ${Array(9).fill('<col>').join('')}
+      <col style="width:36px">
+    </colgroup>`;
+
+    // Build one section per day with scores
+    const daySections = [];
+    for (let d = 1; d <= DAYS; d++) {
+      const dayKey     = `day${d}`;
+      const sc         = (_allScores[dayKey] || {})[pid];
+      if (!sc) continue;
+
+      const day        = _schedule[dayKey] || {};
+      const { pars, sis } = dayParsAndSIs(dayKey);
+      const hcp        = effectiveHcp(pid, dayKey);
+      const courseName = _courses[day.courseId]?.name || day.label || `Day ${d}`;
+      const fmtLabel   = FORMAT_SHORT[day.format] || '';
+
+      const gross    = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
+      const sbPts    = gross.map((g, i) => g ? Scoring.stablefordPoints(g, pars[i], Scoring.shotsOnHole(hcp, sis[i])) : null);
+      const grossCls = gross.map((g, i) => g ? Scoring.classify(g, pars[i]) : '');
+      const sbCls    = sbPts.map(v => {
+        if (v === null) return '';
+        if (v >= 4) return 'eagle'; if (v === 3) return 'birdie';
+        if (v === 2) return 'par';  if (v === 1) return 'bogey';
+        return 'double';
+      });
+
+      // Subtotals
+      const fG = gross.slice(0,9).reduce((s,v)=>s+(v||0),0);
+      const bG = gross.slice(9).reduce((s,v)=>s+(v||0),0);
+      const fS = sbPts.slice(0,9).reduce((s,v)=>s+(v||0),0);
+      const bS = sbPts.slice(9).reduce((s,v)=>s+(v||0),0);
+
+      // Gross cells — coloured text
+      const grossCells = gross.map((v, i) => {
+        if (!v) return `<td style="${CELL};color:#ddd">—</td>`;
+        const c = grossCls[i];
+        const fg = c==='eagle'?'#b89600':c==='birdie'?'#1565c0':c==='par'?'#2e7d32':c==='double'?'#c62828':c==='triple'?'#6a1b9a':'#1a2332';
+        const fw = (c && c!=='bogey') ? '700' : '400';
+        return `<td style="${CELL};color:${fg};font-weight:${fw}">${v}</td>`;
+      });
+
+      // Stableford cells — circle pip
+      const DOT = 'display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:0.68rem;font-weight:700;line-height:1';
+      const sbCells = sbPts.map((v, i) => {
+        if (v === null || v === 0) return `<td style="${CELL};color:#ddd">—</td>`;
+        const c = sbCls[i];
+        let dot;
+        if (c === 'eagle')       dot = `<span style="${DOT};background:#ffd700;color:#1a2332">${v}</span>`;
+        else if (c === 'birdie') dot = `<span style="${DOT};background:#1565c0;color:#fff">${v}</span>`;
+        else if (c === 'par')    dot = `<span style="${DOT};background:#fff;color:#1a2332;border:1.5px solid #d0d7de">${v}</span>`;
+        else if (c === 'bogey')  dot = `<span style="${DOT};background:#1a1a1a;color:#fff">${v}</span>`;
+        else                     dot = `<span style="color:#ddd;font-size:0.7rem">—</span>`;
+        return `<td style="${CELL}">${dot}</td>`;
+      });
+
+      // Helper: build one 9-hole table (front or back)
+      function half(startHole, holes9, grossSlice, sbSlice, parSlice, subG, subS) {
+        const hdrRow = `<tr>
+          <th style="${HDR};text-align:left">${startHole === 1 ? 'Front' : 'Back'}</th>
+          ${holes9.map(h => `<th style="${HDR}">${h}</th>`).join('')}
+          <th style="${HDR};background:#e8f0ff">${startHole === 1 ? 'Out' : 'In'}</th>
+        </tr>`;
+        const parRow = `<tr>
+          <td style="${LBL};color:#57606a;font-weight:400">Par</td>
+          ${parSlice.map(v => `<td style="${CELL};color:#57606a;font-size:0.68rem">${v}</td>`).join('')}
+          <td style="${SUB};color:#57606a">${parSlice.reduce((s,v)=>s+v,0)}</td>
+        </tr>`;
+        const grossRow = `<tr>
+          <td style="${LBL}">Gross</td>
+          ${grossSlice.join('')}
+          <td style="${SUB}">${subG||'—'}</td>
+        </tr>`;
+        const sbRow = `<tr>
+          <td style="${LBL}">Pts</td>
+          ${sbSlice.join('')}
+          <td style="${SUB};color:#1a5c2a;font-weight:800">${subS||'—'}</td>
+        </tr>`;
+        return `<table style="border-collapse:collapse;table-layout:fixed;width:100%;margin-bottom:6px">
+          ${colgroup9}
+          <thead>${hdrRow}</thead>
+          <tbody>${parRow}${grossRow}${sbRow}</tbody>
+        </table>`;
+      }
+
+      const frontTable = half(1,  [1,2,3,4,5,6,7,8,9],   grossCells.slice(0,9), sbCells.slice(0,9), pars.slice(0,9), fG, fS);
+      const backTable  = half(10, [10,11,12,13,14,15,16,17,18], grossCells.slice(9), sbCells.slice(9), pars.slice(9), bG, bS);
+
+      // Total strip
+      const totalStrip = `<div style="display:flex;justify-content:flex-end;gap:16px;padding:6px 8px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:0 0 6px 6px;font-size:0.8rem">
+        <span style="color:#57606a">Gross <strong>${fG+bG}</strong></span>
+        <span style="color:#1a5c2a;font-weight:700">Pts <strong>${fS+bS}</strong></span>
+      </div>`;
+
+      daySections.push(`
+        <div style="margin-bottom:20px">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <span class="day-badge">Day ${d}</span>
+            <span style="font-weight:700;font-size:0.9rem">${courseName}</span>
+            <span class="format-badge format-${day.format||''}" style="margin-left:auto">${fmtLabel}</span>
+            <span style="font-size:0.75rem;color:#57606a">HCP&nbsp;${hcp}</span>
+          </div>
+          ${frontTable}${backTable}${totalStrip}
+        </div>`);
+    }
+
+    if (daySections.length === 0) {
+      daySections.push('<p class="text-muted">No scores recorded yet.</p>');
+    }
+
+    // Build and inject the overlay
+    const existing = document.getElementById('player-detail-overlay');
+    if (existing) existing.remove();
+
+    const overlay = document.createElement('div');
+    overlay.id = 'player-detail-overlay';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;overflow-y:auto;-webkit-overflow-scrolling:touch';
+    overlay.innerHTML = `
+      <div style="background:#fff;min-height:100%;max-width:700px;margin:0 auto;padding:16px 12px 40px">
+        <!-- Header -->
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;padding-bottom:12px;border-bottom:2px solid #e5e7eb">
+          <button onclick="ScoreboardPage.closePlayerDetail()"
+            style="background:#f7f8fa;border:1.5px solid #d0d7de;border-radius:8px;padding:8px 14px;font-size:0.9rem;cursor:pointer;font-weight:600">
+            ← Back
+          </button>
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:6px">
+              ${teamDot}<span style="font-weight:800;font-size:1.1rem">${firstName(p.name)}</span>
+            </div>
+            <div style="font-size:0.78rem;color:#57606a;margin-top:2px">
+              ${team ? team.name + ' · ' : ''}HCP ${p.handicap ?? '?'} · ${daySections.length === 1 ? '1 round' : daySections.length + ' rounds'}
+            </div>
+          </div>
+        </div>
+        ${daySections.join('')}
+      </div>`;
+
+    // Tap backdrop to close
+    overlay.addEventListener('click', e => { if (e.target === overlay) closePlayerDetail(); });
+    document.body.appendChild(overlay);
+  }
+
+  function closePlayerDetail() {
+    const el = document.getElementById('player-detail-overlay');
+    if (el) el.remove();
+  }
+
   // ── Set selected day for Daily Results Focus ─────────────
   function setDailyFocusDay(dayKey) {
     _dailyFocusDay = dayKey;
@@ -1647,5 +1813,5 @@ const ScoreboardPage = (() => {
     _unsubs = [];
   }
 
-  return { render, destroy, switchTab, saveNTPDay, saveNTP, setDailyFocusDay };
+  return { render, destroy, switchTab, saveNTPDay, saveNTP, setDailyFocusDay, showPlayerDetail, closePlayerDetail };
 })();
