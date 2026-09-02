@@ -33,7 +33,6 @@ const ScoreboardPage = (() => {
       <div class="tabs">
         <button class="tab-btn active" data-tab="tour"        onclick="ScoreboardPage.switchTab('tour')">🏌️ Tour Results</button>
         <button class="tab-btn" data-tab="dailyfocus"         onclick="ScoreboardPage.switchTab('dailyfocus')">📅 Daily Results</button>
-        <button class="tab-btn" data-tab="teams"              onclick="ScoreboardPage.switchTab('teams')">🏆 Teams</button>
         <button class="tab-btn" data-tab="individual"         onclick="ScoreboardPage.switchTab('individual')">👤 Individual</button>
         <button class="tab-btn" data-tab="bingo"              onclick="ScoreboardPage.switchTab('bingo')">🎯 Birdie Bingo</button>
         <button class="tab-btn" data-tab="ntp"                onclick="ScoreboardPage.switchTab('ntp')">📍 Nearest Pin</button>
@@ -43,7 +42,6 @@ const ScoreboardPage = (() => {
 
       <div id="sb-tour"        class="tab-content"></div>
       <div id="sb-dailyfocus"  class="tab-content hidden"></div>
-      <div id="sb-teams"       class="tab-content hidden"></div>
       <div id="sb-individual"  class="tab-content hidden"></div>
       <div id="sb-bingo"       class="tab-content hidden"></div>
       <div id="sb-ntp"         class="tab-content hidden"></div>
@@ -82,6 +80,10 @@ const ScoreboardPage = (() => {
   }
 
   // ── Helpers ──────────────────────────────────────────────
+  function firstName(fullName) {
+    return (fullName || '').split(' ')[0] || fullName || '';
+  }
+
   function playerTeam(pid) {
     for (const [tid, team] of Object.entries(_teams)) {
       if ((team.playerIds || []).includes(pid)) return { tid, name: team.name, color: team.color };
@@ -306,7 +308,7 @@ const ScoreboardPage = (() => {
         color:   team.color,
         members: (team.playerIds || []).slice()
           .sort((a, b) => (_players[a]?.handicap ?? 99) - (_players[b]?.handicap ?? 99))
-          .map(pid => _players[pid]?.name?.split(' ')[0]).filter(Boolean),
+          .map(pid => firstName(_players[pid]?.name)).filter(Boolean),
         dayPts:  dayPts[tid],
         ntp,
         bingo,
@@ -405,7 +407,7 @@ const ScoreboardPage = (() => {
       return { tid, name: team.name, color: team.color, total, dayPts,
                members: (team.playerIds || []).slice()
                  .sort((a, b) => (_players[a]?.handicap ?? 99) - (_players[b]?.handicap ?? 99))
-                 .map(pid => _players[pid]?.name?.split(' ')[0]).filter(Boolean) };
+                 .map(pid => firstName(_players[pid]?.name)).filter(Boolean) };
     }).sort((a, b) => b.total - a.total);
 
     const dayHeaders = Array.from({length: DAYS}, (_, i) => {
@@ -469,7 +471,7 @@ const ScoreboardPage = (() => {
         if (dayHolePts[`day${d}`]) { holePts = dayHolePts[`day${d}`]; break; }
       }
       const team = playerTeam(pid);
-      return { pid, name: p.name, handicap: p.handicap, total, dayPts, holePts,
+      return { pid, name: firstName(p.name), handicap: p.handicap, total, dayPts, holePts,
                teamName: team?.name, teamColor: team?.color };
     }).sort((a, b) => Scoring.countbackSort(a, b));
 
@@ -478,10 +480,9 @@ const ScoreboardPage = (() => {
       return;
     }
 
-    const dayHeaders = Array.from({length: DAYS}, (_, i) => {
-      const day = _schedule[`day${i+1}`];
-      return `<th style="text-align:right;font-size:0.75rem">${day?.label||`D${i+1}`}<br><span style="font-weight:400;opacity:0.8">${FORMAT_SHORT[day?.format]||''}</span></th>`;
-    }).join('');
+    const dayHeaders = Array.from({length: DAYS}, (_, i) =>
+      `<th class="ind-day-th">D${i + 1}</th>`
+    ).join('');
 
     const rows = standings.map((s, idx) => {
       // Determine tied position
@@ -490,7 +491,6 @@ const ScoreboardPage = (() => {
       const nextSame = idx < standings.length - 1 && standings[idx + 1].total === s.total &&
                        Scoring.countbackCompare(s.holePts || [], standings[idx + 1].holePts || []) === 0;
       const isTied   = prevSame || nextSame;
-      // Find the first tied position for this group
       let pos = idx + 1;
       if (isTied) {
         let g = idx;
@@ -502,22 +502,24 @@ const ScoreboardPage = (() => {
       const posCls   = !isTied && pos <= 3 ? pos : 'n';
       const dayTds = Array.from({length: DAYS}, (_, i) => {
         const pts = s.dayPts[`day${i+1}`];
-        return `<td style="text-align:right">${(pts !== null && pts > 0) ? pts : '<span class="text-muted">—</span>'}</td>`;
+        return `<td class="ind-day-td">${(pts !== null && pts > 0) ? pts : '<span class="text-muted">—</span>'}</td>`;
       }).join('');
       const dot = s.teamColor ? `<span class="team-color-dot" style="background:${s.teamColor}"></span>` : '';
       return `<tr>
         <td><span class="pos-badge pos-${posCls}" style="${isTied ? 'font-size:0.65rem;' : ''}">${posLabel}</span></td>
         <td>${dot}${s.name}<br><span class="text-muted" style="font-size:0.72rem">HCP ${s.handicap??'?'}</span></td>
         ${dayTds}
-        <td style="text-align:right;font-weight:700;color:#1a5c2a;font-size:1rem">${s.total}</td>
+        <td class="ind-total-td">${s.total}</td>
       </tr>`;
     }).join('');
 
     el.innerHTML = `<div class="card" style="overflow-x:auto">
       <table class="scoreboard-table">
         <thead><tr>
-          <th style="width:36px">#</th><th>Player</th>${dayHeaders}
-          <th style="text-align:right">Total</th>
+          <th style="width:36px">#</th>
+          <th>Player</th>
+          ${dayHeaders}
+          <th class="ind-total-th">Total</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table></div>`;
@@ -578,34 +580,45 @@ const ScoreboardPage = (() => {
                grandTotal: totalHit + bonusTotal };
     });
 
-    // Single unified table — one row per team
-    const holeHeaders = Array.from({length: 9}, (_, i) => `<th class="bb-hole-th">${i+1}</th>`).join('');
-    const holeHeaders2 = Array.from({length: 9}, (_, i) => `<th class="bb-hole-th">${i+10}</th>`).join('');
-
-    const teamRows = teamData.map(({ team, holeHit, totalHit, bonusFront, bonusBack, bonusFull, grandTotal }) => {
-      // Colour state per half:
-      //   all 18 done  → all cells green
-      //   front 9 done → front cells orange, back cells use their own state
-      //   back 9 done  → back cells orange
-      //   otherwise    → ticked cells grey
-      const cells = holeHit.map((hit, i) => {
-        if (!hit) return `<td class="bb-hole-cell bb-empty${i===8?' bb-nine-end':''}"></td>`;
-        const isFront = i < 9;
-        let cls;
-        if (bonusFull)                       cls = 'bb-hit-green';
-        else if (isFront  && bonusFront)     cls = 'bb-hit-orange';
-        else if (!isFront && bonusBack)      cls = 'bb-hit-orange';
-        else                                 cls = 'bb-hit-grey';
-        return `<td class="bb-hole-cell ${cls}${i===8?' bb-nine-end':''}">✓</td>`;
+    // ── Vertical card per team ───────────────────────────────
+    const teamCards = teamData.map(({ team, holeHit, front9Hit, back9Hit, totalHit, bonusFront, bonusBack, bonusFull, bonusTotal, grandTotal }) => {
+      const makeChips = (startIdx) => Array.from({length: 9}, (_, i) => {
+        const hi  = startIdx + i;
+        const hit = holeHit[hi];
+        const isFront = hi < 9;
+        let cls = 'bb-chip-empty';
+        if (hit) {
+          if (bonusFull)                  cls = 'bb-chip-green';
+          else if (isFront && bonusFront) cls = 'bb-chip-orange';
+          else if (!isFront && bonusBack) cls = 'bb-chip-orange';
+          else                            cls = 'bb-chip-grey';
+        }
+        return `<div class="bb-chip ${cls}">${hi + 1}${hit ? '<span class="bb-tick">✓</span>' : ''}</div>`;
       }).join('');
-      return `<tr>
-        <td class="bb-player-name">
-          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${team.color};margin-right:5px;vertical-align:middle"></span>
-          <strong>${team.name}</strong>
-        </td>
-        ${cells}
-        <td class="bb-sub"><strong>${totalHit}</strong></td>
-      </tr>`;
+
+      const bonusPills = [
+        { label: 'Front 9', done: bonusFront },
+        { label: 'Back 9',  done: bonusBack  },
+        { label: 'Full 18', done: bonusFull  },
+      ].map(b => `<span class="bb-bonus-pill ${b.done ? 'bb-bonus-hit' : 'bb-bonus-miss'}">${b.label} +1</span>`).join('');
+
+      return `<div class="card bb-team-card">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+          <div style="display:flex;align-items:center;gap:8px">
+            <span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${team.color};flex-shrink:0"></span>
+            <span style="font-weight:700;font-size:1rem">${team.name}</span>
+          </div>
+          <span style="font-size:1.5rem;font-weight:900;color:#1a5c2a">${grandTotal}</span>
+        </div>
+        <div class="bb-half-label">FRONT 9 — ${front9Hit}/9</div>
+        <div class="bb-chip-row">${makeChips(0)}</div>
+        <div class="bb-half-label" style="margin-top:8px">BACK 9 — ${back9Hit}/9</div>
+        <div class="bb-chip-row">${makeChips(9)}</div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${bonusPills}</div>
+        <div style="margin-top:8px;font-size:0.78rem;color:#57606a">
+          Holes: <strong>${totalHit}</strong> &nbsp;·&nbsp; Bonus: <strong>+${bonusTotal}</strong> &nbsp;·&nbsp; Total: <strong style="color:#1a5c2a">${grandTotal}</strong>
+        </div>
+      </div>`;
     }).join('');
 
     // ── Per-player birdie (3pt) and eagle (4pt) counts ────────
@@ -633,7 +646,7 @@ const ScoreboardPage = (() => {
       .map(([pid, p]) => {
         const { birdies, eagles } = hiBirdies[pid] || { birdies: 0, eagles: 0 };
         const team = playerTeam(pid);
-        return { name: p.name, birdies, eagles, total: birdies + eagles, teamColor: team?.color };
+        return { name: firstName(p.name), birdies, eagles, total: birdies + eagles, teamColor: team?.color };
       })
       .filter(p => p.total > 0)
       .sort((a, b) => b.eagles - a.eagles || b.birdies - a.birdies);
@@ -658,23 +671,7 @@ const ScoreboardPage = (() => {
     }).join('');
 
     el.innerHTML = `
-      <div class="card" style="overflow-x:auto;padding:10px 8px">
-        <table class="bb-table">
-          <thead>
-            <tr>
-              <th class="bb-player-name">Team</th>
-              ${holeHeaders}
-              <th class="bb-sub bb-nine-end">F9</th>
-              ${holeHeaders2}
-              <th class="bb-sub">TOT</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${teamRows}
-          </tbody>
-        </table>
-      </div>
-
+      ${teamCards}
       ${hiList.length > 0 ? `
       <div class="card">
         <div class="card-header" style="margin-bottom:12px">
@@ -735,7 +732,7 @@ const ScoreboardPage = (() => {
       const rows = par3Holes.map(h => {
         const winner = dayNTP[h];
         const playerOptions = Object.entries(_players)
-          .map(([pid, p]) => `<option value="${pid}"${winner?.winnerId === pid ? ' selected' : ''}>${p.name}</option>`)
+          .map(([pid, p]) => `<option value="${pid}"${winner?.winnerId === pid ? ' selected' : ''}>${firstName(p.name)}</option>`)
           .join('');
 
         return `<tr>
@@ -789,7 +786,7 @@ const ScoreboardPage = (() => {
       const hole = parseInt(sel.dataset.hole, 10);
       const pid  = sel.value;
       if (pid) {
-        const name = _players[pid]?.name || pid;
+        const name = firstName(_players[pid]?.name) || pid;
         saves.push(DB.set(`ntp/${dayKey}/${hole}`, { winnerId: pid, winnerName: name }));
       } else {
         saves.push(DB.remove(`ntp/${dayKey}/${hole}`));
@@ -805,7 +802,7 @@ const ScoreboardPage = (() => {
       await DB.remove(`ntp/${dayKey}/${hole}`);
       return;
     }
-    const name = _players[pid]?.name || pid;
+    const name = firstName(_players[pid]?.name) || pid;
     await DB.set(`ntp/${dayKey}/${hole}`, { winnerId: pid, winnerName: name });
     App.toast(`NTP Day ${dayKey.replace('day','')} Hole ${hole}: ${name} ✓`);
   }
@@ -1135,7 +1132,7 @@ const ScoreboardPage = (() => {
         const total  = sc.stableford ?? null;
         const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
         const holePts = total ? Scoring.holePoints(scores, pars, sis, p?.handicap || 0) : null;
-        return { name: p?.name || pid, total, pts: total, holePts };
+        return { name: firstName(p?.name) || pid, total, pts: total, holePts };
       }).filter(m => m.total !== null && m.total > 0).sort((a, b) => Scoring.countbackSort(a, b));
 
       if (members.length === 0) return '';
@@ -1175,7 +1172,7 @@ const ScoreboardPage = (() => {
         const t     = playerTeam(pid);
         const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
         const holePts = total ? Scoring.holePoints(scores, pars, sis, p.handicap || 0) : null;
-        return { pid, name: p.name, total, holePts, teamColor: t?.color, teamName: t?.name };
+        return { pid, name: firstName(p.name), total, holePts, teamColor: t?.color, teamName: t?.name };
       })
       .filter(e => e.total !== null && e.total > 0)
       .sort((a, b) => Scoring.countbackSort(a, b));
@@ -1321,7 +1318,7 @@ const ScoreboardPage = (() => {
       const team = playerTeam(pid);
       return {
         pid,
-        name: p.name,
+        name: firstName(p.name),
         handicap: p.handicap,
         total,
         dayLost,
@@ -1329,16 +1326,15 @@ const ScoreboardPage = (() => {
       };
     }).sort((a, b) => b.total - a.total); // Sort highest lost ball count to lowest
 
-    const dayHeaders = Array.from({length: DAYS}, (_, i) => {
-      const day = _schedule[`day${i+1}`];
-      return `<th style="text-align:right;font-size:0.75rem">${day?.label || `Day ${i+1}`}</th>`;
-    }).join('');
+    const dayHeaders = Array.from({length: DAYS}, (_, i) =>
+      `<th class="ind-day-th">D${i + 1}</th>`
+    ).join('');
 
     const rows = standings.map((s, idx) => {
       const pos = idx + 1;
       const dayTds = Array.from({length: DAYS}, (_, i) => {
         const lost = s.dayLost[`day${i+1}`];
-        return `<td style="text-align:right;color:${lost > 0 ? '#b91c1c' : '#57606a'}">${lost > 0 ? lost : '<span class="text-muted">0</span>'}</td>`;
+        return `<td class="ind-day-td" style="color:${lost > 0 ? '#b91c1c' : '#57606a'}">${lost > 0 ? lost : '<span class="text-muted">—</span>'}</td>`;
       }).join('');
       const dot = s.teamColor ? `<span class="team-color-dot" style="background:${s.teamColor}"></span>` : '';
       const badgeCls = pos <= 3 ? `pos-${pos}` : 'pos-n';
@@ -1346,28 +1342,27 @@ const ScoreboardPage = (() => {
         <td><span class="pos-badge ${badgeCls}">${pos}</span></td>
         <td>${dot}${s.name}<br><span class="text-muted" style="font-size:0.72rem">HCP ${s.handicap ?? '?'}</span></td>
         ${dayTds}
-        <td style="text-align:right;font-weight:700;color:#b91c1c;background:#fdf2f2">${s.total}</td>
+        <td class="ind-total-td" style="color:#b91c1c">${s.total}</td>
       </tr>`;
     }).join('');
 
     el.innerHTML = `
-      <!-- Bold Grand Total Banner -->
       <div class="card" style="text-align:center;padding:20px 10px;background:#fdf2f2;border:1.5px solid #f5c2c2;border-radius:10px;margin-bottom:14px">
         <div style="font-size:0.85rem;text-transform:uppercase;letter-spacing:1px;font-weight:700;color:#57606a;margin-bottom:4px">🔴 Total Balls Lost</div>
         <div style="font-size:2.8rem;font-weight:900;color:#b91c1c;line-height:1">${overallTotal}</div>
       </div>
 
-      <div class="card" style="overflow-x:auto;padding:12px 8px">
+      <div class="card" style="overflow-x:auto">
         <div class="card-header" style="margin-bottom:12px">
           <span class="card-title">🔴 Lost Balls Standings</span>
-          <span class="text-muted" style="font-size:0.78rem">Sorted by most balls lost</span>
+          <span class="text-muted" style="font-size:0.78rem">Most balls lost first</span>
         </div>
         <table class="scoreboard-table">
           <thead><tr>
             <th style="width:36px">#</th>
             <th>Player</th>
             ${dayHeaders}
-            <th style="text-align:right;background:#fdf2f2;color:#b91c1c">Total</th>
+            <th class="ind-total-th">Total</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
