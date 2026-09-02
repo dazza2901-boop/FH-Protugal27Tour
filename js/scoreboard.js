@@ -113,6 +113,19 @@ const ScoreboardPage = (() => {
     };
   }
 
+  // Extract all pairs for a day from schedule groupings (consecutive pairs within each group)
+  function dayPairs(dayKey) {
+    const groupings = _schedule[dayKey]?.groupings || [];
+    const pairs = [];
+    groupings.forEach(g => {
+      const ids = g.playerIds || [];
+      for (let i = 0; i + 1 < ids.length; i += 2) {
+        pairs.push([ids[i], ids[i + 1]]);
+      }
+    });
+    return pairs;
+  }
+
   function teamDayScore(team, dayKey) {
     const format     = _schedule[dayKey]?.format || 'singles';
     const dayScores  = _allScores[dayKey] || {};
@@ -125,21 +138,19 @@ const ScoreboardPage = (() => {
       memberIds.forEach(pid => { pts += dayScores[pid]?.stableford || 0; });
 
     } else if (format === 'pairs') {
-      // Best score of the two partners per hole — matches recalcPairs() in scorecard
-      for (let pairIdx = 0; pairIdx * 2 + 1 < memberIds.length; pairIdx++) {
-        const pidA = memberIds[pairIdx * 2];
-        const pidB = memberIds[pairIdx * 2 + 1];
-        let pairPts = 0;
+      // Pairs come from schedule groupings (consecutive within each group), not team player order.
+      // Best score of the two partners per hole — matches recalcPairs() in scorecard exactly.
+      const memberSet = new Set(memberIds);
+      const pairs = dayPairs(dayKey).filter(([a, b]) => memberSet.has(a) && memberSet.has(b));
+      for (const [pidA, pidB] of pairs) {
         for (let hole = 1; hole <= 18; hole++) {
           const i = hole - 1;
           const grossA = dayScores[pidA]?.[`h${hole}`] || 0;
           const grossB = dayScores[pidB]?.[`h${hole}`] || 0;
           const ptsA = grossA ? Scoring.stablefordPoints(grossA, pars[i], Scoring.shotsOnHole(effectiveHcp(pidA, dayKey), sis[i])) : 0;
           const ptsB = grossB ? Scoring.stablefordPoints(grossB, pars[i], Scoring.shotsOnHole(effectiveHcp(pidB, dayKey), sis[i])) : 0;
-          pairPts += Math.max(ptsA, ptsB);
+          pts += Math.max(ptsA, ptsB);
         }
-        console.log(`[teamDayScore] ${dayKey} pair${pairIdx} pidA=${pidA} hcpA=${effectiveHcp(pidA,dayKey)} sbfA=${dayScores[pidA]?.stableford} pidB=${pidB} hcpB=${effectiveHcp(pidB,dayKey)} sbfB=${dayScores[pidB]?.stableford} pairPts=${pairPts}`);
-        pts += pairPts;
       }
 
     } else if (format === 'team') {
@@ -208,16 +219,27 @@ const ScoreboardPage = (() => {
       });
 
     } else if (format === 'pairs') {
-      // Build pairs per team (consecutive pairs within each team's playerIds).
+      // Build pairs from schedule groupings (consecutive within each group).
       // Then rank all pairs globally and credit their shared team.
-      const pairs = [];
+      const playerTidMap = {};
       Object.entries(_teams).forEach(([tid, team]) => {
-        const ids = team.playerIds || [];
-        for (let i = 0; i < ids.length; i += 2) {
-          const p1 = ids[i], p2 = ids[i + 1];
-          const pts = (dayScores[p1]?.stableford || 0) + (dayScores[p2]?.stableford || 0);
-          if (pts > 0) pairs.push({ tid, pts });
+        (team.playerIds || []).forEach(pid => { playerTidMap[pid] = tid; });
+      });
+      const pairs = [];
+      dayPairs(dayKey).forEach(([p1, p2]) => {
+        const tid = playerTidMap[p1];
+        if (!tid || playerTidMap[p2] !== tid) return; // cross-team pair (shouldn't happen)
+        const { pars, sis } = dayParsAndSIs(dayKey);
+        let pts = 0;
+        for (let hole = 1; hole <= 18; hole++) {
+          const i = hole - 1;
+          const g1 = dayScores[p1]?.[`h${hole}`] || 0;
+          const g2 = dayScores[p2]?.[`h${hole}`] || 0;
+          const s1 = g1 ? Scoring.stablefordPoints(g1, pars[i], Scoring.shotsOnHole(effectiveHcp(p1, dayKey), sis[i])) : 0;
+          const s2 = g2 ? Scoring.stablefordPoints(g2, pars[i], Scoring.shotsOnHole(effectiveHcp(p2, dayKey), sis[i])) : 0;
+          pts += Math.max(s1, s2);
         }
+        if (pts > 0) pairs.push({ tid, pts });
       });
       pairs.sort((a, b) => b.pts - a.pts);
       pairs.forEach((pair, idx) => {
@@ -675,7 +697,7 @@ const ScoreboardPage = (() => {
         return { name: firstName(p.name), birdies, eagles, total: birdies + eagles, teamColor: team?.color };
       })
       .filter(p => p.total > 0)
-      .sort((a, b) => b.eagles - a.eagles || b.birdies - a.birdies);
+      .sort((a, b) => b.total - a.total || b.eagles - a.eagles);
 
     const hiRows = hiList.map((p, idx) => {
       const dot = p.teamColor
@@ -1174,28 +1196,6 @@ const ScoreboardPage = (() => {
           ? 'Pairs total'
           : 'Team total';
 
-      // ── Debug info shown on screen ──
-      let debugHtml = '';
-      if (fmt === 'pairs') {
-        const memberIds = team.playerIds || [];
-        const debugLines = [];
-        for (let pairIdx = 0; pairIdx * 2 + 1 < memberIds.length; pairIdx++) {
-          const pidA = memberIds[pairIdx * 2];
-          const pidB = memberIds[pairIdx * 2 + 1];
-          const hcpA = effectiveHcp(pidA, dayKey);
-          const hcpB = effectiveHcp(pidB, dayKey);
-          const sbfA = (_allScores[dayKey] || {})[pidA]?.stableford ?? '—';
-          const sbfB = (_allScores[dayKey] || {})[pidB]?.stableford ?? '—';
-          const nameA = firstName(_players[pidA]?.name) || pidA;
-          const nameB = firstName(_players[pidB]?.name) || pidB;
-          debugLines.push(`Pair ${pairIdx+1}: ${nameA}(hcp ${hcpA}, sbf ${sbfA}) + ${nameB}(hcp ${hcpB}, sbf ${sbfB})`);
-        }
-        debugHtml = `<div style="margin-top:6px;padding:6px 8px;background:#fffbe6;border:1px solid #f0c040;border-radius:6px;font-size:0.72rem;color:#555">
-          <strong>Debug:</strong><br>${debugLines.join('<br>')}
-          <br>dayHcps loaded: ${JSON.stringify(_dayHcps[dayKey] || {})}
-        </div>`;
-      }
-
       const rows = members.map((m, idx) => {
         const zoneBadge = idx === 0
           ? `<span style="font-size:1rem">🥇</span>`
@@ -1226,7 +1226,6 @@ const ScoreboardPage = (() => {
         <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
           <tbody>${rows}${totalRow}</tbody>
         </table>
-        ${debugHtml}
       </div>`;
     }).join('') || '<p class="text-muted">No scores recorded yet for this day.</p>';
 
@@ -1301,6 +1300,119 @@ const ScoreboardPage = (() => {
       </table>`;
     }
 
+    // ── Day leaderboard (all formats) ────────────────────────
+    const medals = ['🥇','🥈','🥉'];
+    let teamLeaderboardHtml = '';
+    const dayFmt = day.format || 'singles';
+
+    if (dayFmt === 'team') {
+      // ── Team day: rank teams by team score ──
+      const standings = teamEntries
+        .map(([tid, team]) => ({ team, score: teamDayScore(team, dayKey) }))
+        .filter(t => t.score > 0)
+        .sort((a, b) => b.score - a.score);
+
+      if (standings.length > 0) {
+        const lbRows = standings.map((t, idx) => {
+          const tourPts = TOUR_PTS_TEAM[idx] || 0;
+          return `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;${idx < standings.length - 1 ? 'border-bottom:1px solid #e5e7eb;' : ''}">
+            <span style="font-size:1.4rem;width:28px;text-align:center">${medals[idx] || ''}</span>
+            <span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${t.team.color};flex-shrink:0"></span>
+            <span style="font-weight:700;font-size:1rem;flex:1">${t.team.name}</span>
+            <span style="font-weight:900;font-size:1.6rem;color:#1a5c2a;margin-right:4px">${t.score}</span>
+            ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:12px">+${tourPts} pts</span>` : ''}
+          </div>`;
+        }).join('');
+        teamLeaderboardHtml = `
+          <div class="card" style="margin-bottom:14px">
+            <div class="card-header" style="margin-bottom:4px">
+              <span class="card-title">🏆 Team Leaderboard</span>
+              <span class="format-badge format-team">Team Day</span>
+            </div>
+            ${lbRows}
+          </div>`;
+      }
+
+    } else if (dayFmt === 'pairs') {
+      // ── Pairs day: rank each pair by best-of-two score ──
+      const allPairs = dayPairs(dayKey);
+      const playerTidMap = {};
+      Object.entries(_teams).forEach(([tid, team]) => {
+        (team.playerIds || []).forEach(pid => { playerTidMap[pid] = tid; });
+      });
+
+      const pairStandings = allPairs.map(([pidA, pidB]) => {
+        const team = _teams[playerTidMap[pidA]];
+        let score = 0;
+        for (let hole = 1; hole <= 18; hole++) {
+          const i = hole - 1;
+          const gA = dayScores[pidA]?.[`h${hole}`] || 0;
+          const gB = dayScores[pidB]?.[`h${hole}`] || 0;
+          const sA = gA ? Scoring.stablefordPoints(gA, pars[i], Scoring.shotsOnHole(effectiveHcp(pidA, dayKey), sis[i])) : 0;
+          const sB = gB ? Scoring.stablefordPoints(gB, pars[i], Scoring.shotsOnHole(effectiveHcp(pidB, dayKey), sis[i])) : 0;
+          score += Math.max(sA, sB);
+        }
+        const nameA = firstName(_players[pidA]?.name) || pidA;
+        const nameB = firstName(_players[pidB]?.name) || pidB;
+        return { team, score, label: `${nameA} & ${nameB}` };
+      }).filter(p => p.score > 0).sort((a, b) => b.score - a.score);
+
+      if (pairStandings.length > 0) {
+        const lbRows = pairStandings.map((p, idx) => {
+          const tourPts = TOUR_PTS_PAIRS[idx] || 0;
+          const color = p.team?.color || '#ccc';
+          return `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;${idx < pairStandings.length - 1 ? 'border-bottom:1px solid #e5e7eb;' : ''}">
+            <span style="font-size:1.4rem;width:28px;text-align:center">${medals[idx] || ''}</span>
+            <span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${color};flex-shrink:0"></span>
+            <span style="font-weight:700;font-size:1rem;flex:1">${p.label}</span>
+            <span style="font-weight:900;font-size:1.6rem;color:#1a5c2a;margin-right:4px">${p.score}</span>
+            ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:12px">+${tourPts} pts</span>` : ''}
+          </div>`;
+        }).join('');
+        teamLeaderboardHtml = `
+          <div class="card" style="margin-bottom:14px">
+            <div class="card-header" style="margin-bottom:4px">
+              <span class="card-title">🏆 Pairs Leaderboard</span>
+              <span class="format-badge format-pairs">Pairs Day</span>
+            </div>
+            ${lbRows}
+          </div>`;
+      }
+
+    } else if (dayFmt === 'singles') {
+      // ── Singles day: rank players by individual stableford ──
+      const { pars: singPars, sis: singSis } = dayParsAndSIs(dayKey);
+      const playerStandings = Object.entries(_players).map(([pid, p]) => {
+        const sc = dayScores[pid] || {};
+        const total = sc.stableford || 0;
+        const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
+        const holePts = total ? Scoring.holePoints(scores, singPars, singSis, effectiveHcp(pid, dayKey)) : null;
+        const team = playerTeam(pid);
+        return { pid, name: firstName(p.name), total, holePts, teamColor: team?.color, teamName: team?.name };
+      }).filter(p => p.total > 0).sort((a, b) => Scoring.countbackSort(a, b));
+
+      if (playerStandings.length > 0) {
+        const lbRows = playerStandings.map((p, idx) => {
+          const tourPts = TOUR_PTS_SINGLES[idx] || 0;
+          return `<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;${idx < playerStandings.length - 1 ? 'border-bottom:1px solid #e5e7eb;' : ''}">
+            <span class="pos-badge pos-${idx < 3 ? idx+1 : 'n'}" style="flex-shrink:0">${idx+1}</span>
+            ${p.teamColor ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.teamColor};flex-shrink:0"></span>` : ''}
+            <span style="font-weight:700;font-size:0.95rem;flex:1">${p.name}<br><span style="font-size:0.72rem;font-weight:400;color:#57606a">${p.teamName||''}</span></span>
+            <span style="font-weight:900;font-size:1.3rem;color:#1a5c2a;margin-right:4px">${p.total}</span>
+            ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:12px">+${tourPts} pts</span>` : ''}
+          </div>`;
+        }).join('');
+        teamLeaderboardHtml = `
+          <div class="card" style="margin-bottom:14px">
+            <div class="card-header" style="margin-bottom:4px">
+              <span class="card-title">🏆 Individual Leaderboard</span>
+              <span class="format-badge format-singles">Singles Day</span>
+            </div>
+            ${lbRows}
+          </div>`;
+      }
+    }
+
     el.innerHTML = `
       <!-- Day selector -->
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
@@ -1318,6 +1430,9 @@ const ScoreboardPage = (() => {
         <span style="font-weight:700">${day.label || dayKey.replace('day','Day ')}</span>
         <span class="format-badge format-${day.format || ''}" style="margin-left:auto">${fmt}</span>
       </div>
+
+      <!-- Team leaderboard (team day only) -->
+      ${teamLeaderboardHtml}
 
       <!-- Team scoring zones -->
       <div class="card">

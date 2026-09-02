@@ -211,7 +211,7 @@ async function seedIfEmpty() {
 
   const schedule = await DB.get('schedule');
   if (!schedule) {
-    const defaultFormats = ['singles','pairs','team','pairs','singles'];
+    const defaultFormats = ['singles','pairs','singles','team','pairs'];
     const days = {};
     for (let d = 1; d <= 5; d++) {
       days[`day${d}`] = {
@@ -223,6 +223,14 @@ async function seedIfEmpty() {
       };
     }
     await DB.set('schedule', days);
+  } else {
+    // Ensure correct formats for each day
+    const requiredFormats = { day1:'team', day2:'pairs', day3:'singles', day4:'team', day5:'pairs' };
+    for (const [dk, fmt] of Object.entries(requiredFormats)) {
+      if (schedule[dk] && schedule[dk].format !== fmt) {
+        await DB.update(`schedule/${dk}`, { format: fmt });
+      }
+    }
   }
 }
 

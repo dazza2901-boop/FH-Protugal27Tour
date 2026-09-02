@@ -400,28 +400,29 @@ const ScorecardPage = (() => {
       }
     });
 
-    // ── Group contribution row ─────────────────────────────
-    const contribLabel = {
-      singles: `Best 1 (Singles)`,
-      pairs:   `Best 1/hole (Pairs)`,
-      team:    `Best 2 (P3/4) · Best 3 (P5)`
-    }[_dayFormat] || 'Group';
+    // ── Group contribution row (singles + team only — not pairs) ──
+    if (_dayFormat !== 'pairs') {
+      const contribLabel = {
+        singles: `Best 1 (Singles)`,
+        team:    `Best 2 (P3/4) · Best 3 (P5)`
+      }[_dayFormat] || 'Group';
 
-    html += `<tr class="sc-contrib-row">
-      <td class="sc-name-th sc-contrib-label">${contribLabel}</td>`;
+      html += `<tr class="sc-contrib-row">
+        <td class="sc-name-th sc-contrib-label">${contribLabel}</td>`;
 
-    for (let i = 0; i < 9; i++) {
-      html += `<td class="sc-hole-th sc-contrib-cell${i === 8 ? ' sc-nine-end' : ''}" id="cb-${i+1}"></td>`;
+      for (let i = 0; i < 9; i++) {
+        html += `<td class="sc-hole-th sc-contrib-cell${i === 8 ? ' sc-nine-end' : ''}" id="cb-${i+1}"></td>`;
+      }
+      html += `<td class="sc-sub-th sc-contrib-sub" id="cb-out"></td>`;
+      for (let i = 9; i < 18; i++) {
+        html += `<td class="sc-hole-th sc-contrib-cell" id="cb-${i+1}"></td>`;
+      }
+      html += `<td class="sc-sub-th sc-contrib-sub" id="cb-in"></td>
+               <td class="sc-sub-th sc-contrib-sub"></td>
+               <td class="sc-sbf-th sc-contrib-total" id="cb-tot"></td>
+               <td class="sc-sub-th sc-contrib-sub" style="background:#155724 !important"></td>
+      </tr>`;
     }
-    html += `<td class="sc-sub-th sc-contrib-sub" id="cb-out"></td>`;
-    for (let i = 9; i < 18; i++) {
-      html += `<td class="sc-hole-th sc-contrib-cell" id="cb-${i+1}"></td>`;
-    }
-    html += `<td class="sc-sub-th sc-contrib-sub" id="cb-in"></td>
-             <td class="sc-sub-th sc-contrib-sub"></td>
-             <td class="sc-sbf-th sc-contrib-total" id="cb-tot"></td>
-             <td class="sc-sub-th sc-contrib-sub" style="background:#155724 !important"></td>
-    </tr>`;
 
     html += `</tbody></table>`;
     document.getElementById('sc-table-wrap').innerHTML = html;
@@ -429,7 +430,7 @@ const ScorecardPage = (() => {
     // Fill in totals for all players, pair rows, and contribution row
     playerIds.forEach(pid => recalcPlayer(pid));
     if (_dayFormat === 'pairs') recalcPairs(playerIds);
-    recalcContrib(playerIds);
+    else recalcContrib(playerIds);
 
     // Render the shot allocation panel for players in this group
     renderShotAlloc(playerIds);
