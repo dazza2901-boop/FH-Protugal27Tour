@@ -315,14 +315,10 @@ const ScoreboardPage = (() => {
       };
     }).sort((a, b) => b.total - a.total);
 
-    // Day header columns
-    const dayHeaders = Array.from({length: DAYS}, (_, i) => {
-      const dk  = `day${i + 1}`;
-      const day = _schedule[dk];
-      const fmt = day?.format;
-      const fmtLabel = fmt === 'team' ? 'T' : fmt === 'singles' ? 'S' : fmt === 'pairs' ? 'P' : '—';
-      return `<th class="sb-tour-day-th">D${i+1}<br><span style="font-weight:400;opacity:0.8">${fmtLabel}</span></th>`;
-    }).join('');
+    // Day header columns — clean D1…D5 only
+    const dayHeaders = Array.from({length: DAYS}, (_, i) =>
+      `<th class="sb-tour-day-th">D${i + 1}</th>`
+    ).join('');
 
     const rows = standings.map((t, idx) => {
       const dayTds = Array.from({length: DAYS}, (_, i) => {
@@ -335,42 +331,38 @@ const ScoreboardPage = (() => {
         return `<td class="sb-tour-day-td">${display}</td>`;
       }).join('');
 
-      const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : '';
       const bonusTotal = +(t.ntp + t.bingo + t.matchplay).toFixed(1);
-      const bonusDetail = [
-        t.ntp       > 0 ? `📍${t.ntp}`       : '',
-        t.bingo     > 0 ? `🎯${t.bingo}`     : '',
-        t.matchplay > 0 ? `⚔️${t.matchplay}` : '',
-      ].filter(Boolean).join(' ');
 
       return `<tr class="team-score-row">
         <td><span class="pos-badge pos-${idx < 3 ? idx + 1 : 'n'}">${idx + 1}</span></td>
         <td>
           <span class="team-color-dot" style="background:${t.color}"></span>
-          <strong>${medal} ${t.name}</strong><br>
-          <span class="text-muted" style="font-size:0.72rem;font-weight:400">${t.members.join(', ')}</span>
+          <strong>${t.name}</strong>
         </td>
         ${dayTds}
-        <td class="sb-tour-ntp-td"  style="text-align:right;color:#57606a">${t.ntp       > 0 ? '+' + t.ntp       : '<span class="text-muted">—</span>'}</td>
-        <td class="sb-tour-bingo-td" style="text-align:right;color:#57606a">${t.bingo     > 0 ? '+' + t.bingo     : '<span class="text-muted">—</span>'}</td>
-        <td class="sb-tour-match-td" style="text-align:right;color:#57606a">${t.matchplay > 0 ? '+' + t.matchplay : '<span class="text-muted">—</span>'}</td>
-        <td class="sb-tour-bonus-td" style="text-align:right;color:#57606a">
-          ${bonusTotal > 0 ? `<span style="font-weight:700">+${bonusTotal}</span>${bonusDetail ? `<br><span style="font-size:0.65rem;font-weight:400">${bonusDetail}</span>` : ''}` : '<span class="text-muted">—</span>'}
-        </td>
-        <td style="text-align:right;font-weight:700;color:#1a5c2a;font-size:1.05rem">${t.total > 0 ? t.total : '<span class="text-muted">—</span>'}</td>
+        <td class="sb-tour-day-td" style="color:#57606a">${bonusTotal > 0 ? '+' + bonusTotal : '<span class="text-muted">—</span>'}</td>
+        <td class="sb-tour-day-td" style="font-weight:700;color:#1a5c2a;font-size:1.05rem">${t.total > 0 ? t.total : '<span class="text-muted">—</span>'}</td>
       </tr>`;
     }).join('');
 
-    // Points key — shown below the table, one line per scoring type
+    // Team legend — colour dot · name · players
+    const legendRows = standings.map(t => `
+      <div style="display:flex;align-items:baseline;gap:8px;padding:4px 0;font-size:0.8rem">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${t.color};flex-shrink:0;margin-top:2px"></span>
+        <span style="font-weight:700;min-width:48px">${t.name}</span>
+        <span style="color:#57606a">${t.members.join(', ')}</span>
+      </div>`).join('');
+
+    // Scoring key
     const keyHtml = `
       <div style="margin-top:14px;padding:10px 12px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:8px;font-size:0.78rem;line-height:1.9">
-        <div style="font-weight:700;color:#1a2332;margin-bottom:4px">📊 Scoring Key</div>
+        <div style="font-weight:700;color:#1a2332;margin-bottom:6px">👥 Teams</div>
+        ${legendRows}
+        <div style="font-weight:700;color:#1a2332;margin:10px 0 4px">📊 Scoring Key</div>
         <div><span style="display:inline-block;min-width:110px;font-weight:600">Team day:</span> 1st 5pts · 2nd 3pts · 3rd 1.5pts</div>
         <div><span style="display:inline-block;min-width:110px;font-weight:600">Singles:</span> 4 · 3.5 · 3 · 2.5 · 2 · 1.5 · 1 · 0.5</div>
         <div><span style="display:inline-block;min-width:110px;font-weight:600">Pairs:</span> 4 · 2.5 · 1.5 · 1</div>
-        <div><span style="display:inline-block;min-width:110px;font-weight:600">📍 NTP:</span> +0.5 per win</div>
-        <div><span style="display:inline-block;min-width:110px;font-weight:600">🎯 Birdie Bingo:</span> F9 complete +1 · B9 complete +1 · Both +0.5 bonus</div>
-        <div><span style="display:inline-block;min-width:110px;font-weight:600">⚔️ Matchplay:</span> Win +1 · Draw +0.5</div>
+        <div><span style="display:inline-block;min-width:110px;font-weight:600">Bonus:</span> NTP +0.5/win · Bingo F9/B9 +1 · Matchplay W+1 D+0.5</div>
       </div>`;
 
     el.innerHTML = `
@@ -380,11 +372,8 @@ const ScoreboardPage = (() => {
             <th class="sb-tour-pos-th">#</th>
             <th>Team</th>
             ${dayHeaders}
-            <th class="sb-tour-day-th sb-tour-ntp-th">📍<br><span style="font-weight:400;font-size:0.7rem">NTP</span></th>
-            <th class="sb-tour-day-th sb-tour-bingo-th">🎯<br><span style="font-weight:400;font-size:0.7rem">Bingo</span></th>
-            <th class="sb-tour-day-th sb-tour-match-th">⚔️<br><span style="font-weight:400;font-size:0.7rem">Match</span></th>
-            <th class="sb-tour-bonus-th">+<br><span style="font-weight:400;font-size:0.7rem">Bonus</span></th>
-            <th style="text-align:right">Total</th>
+            <th class="sb-tour-day-th">Bonus</th>
+            <th class="sb-tour-day-th">Total</th>
           </tr></thead>
           <tbody>${rows}</tbody>
         </table>
