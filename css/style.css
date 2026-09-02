@@ -504,25 +504,23 @@ body {
   font-weight: 700;
   flex-shrink: 0;
 }
-.bb-chip-empty  { background: #f0f0f0; color: #aaa; }
-.bb-chip-grey   { background: #9e9e9e; color: #fff; }
-.bb-chip-orange { background: #e65100; color: #fff; }
+.bb-chip-empty  { background: #6b7280; color: #d1d5db; }
 .bb-chip-green  { background: #1a5c2a; color: #fff; }
 .bb-tick {
   position: absolute;
-  top: -3px;
-  right: -3px;
-  font-size: 0.55rem;
+  top: -4px;
+  right: -4px;
+  font-size: 0.6rem;
   background: #fff;
   border-radius: 50%;
-  width: 12px;
-  height: 12px;
+  width: 14px;
+  height: 14px;
   display: flex;
   align-items: center;
   justify-content: center;
   color: #1a5c2a;
   font-weight: 900;
-  border: 1px solid #e5e7eb;
+  border: 1.5px solid #1a5c2a;
 }
 .bb-bonus-pill {
   padding: 3px 10px;

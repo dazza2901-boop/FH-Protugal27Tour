@@ -129,14 +129,17 @@ const ScoreboardPage = (() => {
       for (let pairIdx = 0; pairIdx * 2 + 1 < memberIds.length; pairIdx++) {
         const pidA = memberIds[pairIdx * 2];
         const pidB = memberIds[pairIdx * 2 + 1];
+        let pairPts = 0;
         for (let hole = 1; hole <= 18; hole++) {
           const i = hole - 1;
           const grossA = dayScores[pidA]?.[`h${hole}`] || 0;
           const grossB = dayScores[pidB]?.[`h${hole}`] || 0;
           const ptsA = grossA ? Scoring.stablefordPoints(grossA, pars[i], Scoring.shotsOnHole(effectiveHcp(pidA, dayKey), sis[i])) : 0;
           const ptsB = grossB ? Scoring.stablefordPoints(grossB, pars[i], Scoring.shotsOnHole(effectiveHcp(pidB, dayKey), sis[i])) : 0;
-          pts += Math.max(ptsA, ptsB);
+          pairPts += Math.max(ptsA, ptsB);
         }
+        console.log(`[teamDayScore] ${dayKey} pair${pairIdx} pidA=${pidA} hcpA=${effectiveHcp(pidA,dayKey)} sbfA=${dayScores[pidA]?.stableford} pidB=${pidB} hcpB=${effectiveHcp(pidB,dayKey)} sbfB=${dayScores[pidB]?.stableford} pairPts=${pairPts}`);
+        pts += pairPts;
       }
 
     } else if (format === 'team') {
@@ -615,14 +618,7 @@ const ScoreboardPage = (() => {
       const makeChips = (startIdx) => Array.from({length: 9}, (_, i) => {
         const hi  = startIdx + i;
         const hit = holeHit[hi];
-        const isFront = hi < 9;
-        let cls = 'bb-chip-empty';
-        if (hit) {
-          if (bonusFull)                  cls = 'bb-chip-green';
-          else if (isFront && bonusFront) cls = 'bb-chip-orange';
-          else if (!isFront && bonusBack) cls = 'bb-chip-orange';
-          else                            cls = 'bb-chip-grey';
-        }
+        const cls = hit ? 'bb-chip-green' : 'bb-chip-empty';
         return `<div class="bb-chip ${cls}">${hi + 1}${hit ? '<span class="bb-tick">✓</span>' : ''}</div>`;
       }).join('');
 
@@ -1178,6 +1174,28 @@ const ScoreboardPage = (() => {
           ? 'Pairs total'
           : 'Team total';
 
+      // ── Debug info shown on screen ──
+      let debugHtml = '';
+      if (fmt === 'pairs') {
+        const memberIds = team.playerIds || [];
+        const debugLines = [];
+        for (let pairIdx = 0; pairIdx * 2 + 1 < memberIds.length; pairIdx++) {
+          const pidA = memberIds[pairIdx * 2];
+          const pidB = memberIds[pairIdx * 2 + 1];
+          const hcpA = effectiveHcp(pidA, dayKey);
+          const hcpB = effectiveHcp(pidB, dayKey);
+          const sbfA = (_allScores[dayKey] || {})[pidA]?.stableford ?? '—';
+          const sbfB = (_allScores[dayKey] || {})[pidB]?.stableford ?? '—';
+          const nameA = firstName(_players[pidA]?.name) || pidA;
+          const nameB = firstName(_players[pidB]?.name) || pidB;
+          debugLines.push(`Pair ${pairIdx+1}: ${nameA}(hcp ${hcpA}, sbf ${sbfA}) + ${nameB}(hcp ${hcpB}, sbf ${sbfB})`);
+        }
+        debugHtml = `<div style="margin-top:6px;padding:6px 8px;background:#fffbe6;border:1px solid #f0c040;border-radius:6px;font-size:0.72rem;color:#555">
+          <strong>Debug:</strong><br>${debugLines.join('<br>')}
+          <br>dayHcps loaded: ${JSON.stringify(_dayHcps[dayKey] || {})}
+        </div>`;
+      }
+
       const rows = members.map((m, idx) => {
         const zoneBadge = idx === 0
           ? `<span style="font-size:1rem">🥇</span>`
@@ -1208,6 +1226,7 @@ const ScoreboardPage = (() => {
         <table style="width:100%;border-collapse:collapse;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden">
           <tbody>${rows}${totalRow}</tbody>
         </table>
+        ${debugHtml}
       </div>`;
     }).join('') || '<p class="text-muted">No scores recorded yet for this day.</p>';
 
