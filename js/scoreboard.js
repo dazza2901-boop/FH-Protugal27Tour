@@ -10,6 +10,7 @@ const ScoreboardPage = (() => {
   let _schedule  = {};
   let _courses   = {};
   let _allScores = {};
+  let _dayHcps   = {};   // { day1: { pid: shots }, … }  — per-day shot allocations
   let _config    = {};
   let _unsubs    = [];
   let _activeTab = 'tour';
@@ -65,6 +66,10 @@ const ScoreboardPage = (() => {
         _allScores[`day${day}`] = data || {};
         refreshAll();
       }));
+      _unsubs.push(DB.on(`dayHandicaps/day${day}`, data => {
+        _dayHcps[`day${day}`] = data || {};
+        refreshAll();
+      }));
     }
   }
 
@@ -82,6 +87,14 @@ const ScoreboardPage = (() => {
   // ── Helpers ──────────────────────────────────────────────
   function firstName(fullName) {
     return (fullName || '').split(' ')[0] || fullName || '';
+  }
+
+  // Effective handicap for a player on a specific day:
+  // uses the day's shot allocation if set, otherwise falls back to player's index handicap.
+  function effectiveHcp(pid, dayKey) {
+    const alloc = _dayHcps[dayKey]?.[pid];
+    if (alloc !== undefined && alloc !== null && alloc !== '') return Number(alloc);
+    return _players[pid]?.handicap || 0;
   }
 
   function playerTeam(pid) {
@@ -108,29 +121,20 @@ const ScoreboardPage = (() => {
     let pts = 0;
 
     if (format === 'singles') {
-      // Each player's individual stableford summed
+      // Individual stableford values were saved with the correct day handicap — use them directly
       memberIds.forEach(pid => { pts += dayScores[pid]?.stableford || 0; });
 
     } else if (format === 'pairs') {
-      // Pairs: consecutive pairs within the team, best score per hole counts
-      // Matches exactly what recalcPairs() shows on the scorecard
+      // Best score of the two partners per hole — matches recalcPairs() in scorecard
       for (let pairIdx = 0; pairIdx * 2 + 1 < memberIds.length; pairIdx++) {
         const pidA = memberIds[pairIdx * 2];
         const pidB = memberIds[pairIdx * 2 + 1];
         for (let hole = 1; hole <= 18; hole++) {
           const i = hole - 1;
-          const ptsA = (() => {
-            const gross = dayScores[pidA]?.[`h${hole}`] || 0;
-            if (!gross) return 0;
-            const shots = Scoring.shotsOnHole(_players[pidA]?.handicap || 0, sis[i]);
-            return Scoring.stablefordPoints(gross, pars[i], shots);
-          })();
-          const ptsB = (() => {
-            const gross = dayScores[pidB]?.[`h${hole}`] || 0;
-            if (!gross) return 0;
-            const shots = Scoring.shotsOnHole(_players[pidB]?.handicap || 0, sis[i]);
-            return Scoring.stablefordPoints(gross, pars[i], shots);
-          })();
+          const grossA = dayScores[pidA]?.[`h${hole}`] || 0;
+          const grossB = dayScores[pidB]?.[`h${hole}`] || 0;
+          const ptsA = grossA ? Scoring.stablefordPoints(grossA, pars[i], Scoring.shotsOnHole(effectiveHcp(pidA, dayKey), sis[i])) : 0;
+          const ptsB = grossB ? Scoring.stablefordPoints(grossB, pars[i], Scoring.shotsOnHole(effectiveHcp(pidB, dayKey), sis[i])) : 0;
           pts += Math.max(ptsA, ptsB);
         }
       }
@@ -141,8 +145,7 @@ const ScoreboardPage = (() => {
         const holePts = memberIds.map(pid => {
           const gross = dayScores[pid]?.[`h${hole}`] || 0;
           if (!gross) return 0;
-          const shots = Scoring.shotsOnHole(_players[pid]?.handicap || 0, sis[hole - 1]);
-          return Scoring.stablefordPoints(gross, pars[hole - 1], shots);
+          return Scoring.stablefordPoints(gross, pars[hole - 1], Scoring.shotsOnHole(effectiveHcp(pid, dayKey), sis[hole - 1]));
         }).sort((a, b) => b - a);
         const count = pars[hole - 1] === 5 ? 3 : 2;
         for (let k = 0; k < count; k++) pts += holePts[k] || 0;
