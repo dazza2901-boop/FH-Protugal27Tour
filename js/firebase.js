@@ -199,12 +199,14 @@ async function seedIfEmpty() {
   const config = await DB.get('config');
   if (!config) {
     await DB.set('config', {
-      tournamentName: 'Annual Golf Tournament',
+      tournamentName: 'TOETS Cascais 2027',
       year: new Date().getFullYear(),
       currentDay: 1,
       adminPin: '1234',
       days: 5
     });
+  } else if (config.tournamentName !== 'TOETS Cascais 2027') {
+    await DB.update('config', { tournamentName: 'TOETS Cascais 2027' });
   }
 
   const schedule = await DB.get('schedule');
