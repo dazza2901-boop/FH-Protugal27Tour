@@ -1323,11 +1323,13 @@ const ScoreboardPage = (() => {
         const lbRows = standings.map((t, idx) => {
           const tourPts = TOUR_PTS_TEAM[idx] || 0;
           return `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;${idx < standings.length - 1 ? 'border-bottom:1px solid #e5e7eb;' : ''}">
-            <span style="font-size:1.4rem;width:28px;text-align:center">${medals[idx] || ''}</span>
+            <span style="font-size:1.4rem;width:28px;text-align:center;flex-shrink:0">${medals[idx] || ''}</span>
             <span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${t.team.color};flex-shrink:0"></span>
             <span style="font-weight:700;font-size:1rem;flex:1">${t.team.name}</span>
-            <span style="font-weight:900;font-size:1.6rem;color:#1a5c2a;margin-right:4px">${t.score}</span>
-            ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:12px">+${tourPts} pts</span>` : ''}
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:72px">
+              <span style="font-weight:900;font-size:1.6rem;color:#1a5c2a;line-height:1">${t.score}</span>
+              ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:12px;white-space:nowrap">+${tourPts} pts</span>` : '<span style="font-size:0.72rem;color:transparent">—</span>'}
+            </div>
           </div>`;
         }).join('');
         teamLeaderboardHtml = `
@@ -1369,11 +1371,13 @@ const ScoreboardPage = (() => {
           const tourPts = TOUR_PTS_PAIRS[idx] || 0;
           const color = p.team?.color || '#ccc';
           return `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;${idx < pairStandings.length - 1 ? 'border-bottom:1px solid #e5e7eb;' : ''}">
-            <span style="font-size:1.4rem;width:28px;text-align:center">${medals[idx] || ''}</span>
+            <span style="font-size:1.4rem;width:28px;text-align:center;flex-shrink:0">${medals[idx] || ''}</span>
             <span style="display:inline-block;width:14px;height:14px;border-radius:50%;background:${color};flex-shrink:0"></span>
             <span style="font-weight:700;font-size:1rem;flex:1">${p.label}</span>
-            <span style="font-weight:900;font-size:1.6rem;color:#1a5c2a;margin-right:4px">${p.score}</span>
-            ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:12px">+${tourPts} pts</span>` : ''}
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:72px">
+              <span style="font-weight:900;font-size:1.6rem;color:#1a5c2a;line-height:1">${p.score}</span>
+              ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:12px;white-space:nowrap">+${tourPts} pts</span>` : '<span style="font-size:0.72rem;color:transparent">—</span>'}
+            </div>
           </div>`;
         }).join('');
         teamLeaderboardHtml = `
@@ -1405,8 +1409,10 @@ const ScoreboardPage = (() => {
             <span class="pos-badge pos-${idx < 3 ? idx+1 : 'n'}" style="flex-shrink:0">${idx+1}</span>
             ${p.teamColor ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.teamColor};flex-shrink:0"></span>` : ''}
             <span style="font-weight:700;font-size:0.95rem;flex:1">${p.name}<br><span style="font-size:0.72rem;font-weight:400;color:#57606a">${p.teamName||''}</span></span>
-            <span style="font-weight:900;font-size:1.3rem;color:#1a5c2a;margin-right:4px">${p.total}</span>
-            ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:12px">+${tourPts} pts</span>` : ''}
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:72px">
+              <span style="font-weight:900;font-size:1.3rem;color:#1a5c2a;line-height:1">${p.total}</span>
+              ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:12px;white-space:nowrap">+${tourPts} pts</span>` : '<span style="font-size:0.72rem;color:transparent">—</span>'}
+            </div>
           </div>`;
         }).join('');
         teamLeaderboardHtml = `
