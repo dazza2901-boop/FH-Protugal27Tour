@@ -107,9 +107,36 @@ const ScoreboardPage = (() => {
     const { pars, sis } = dayParsAndSIs(dayKey);
     let pts = 0;
 
-    if (format === 'singles' || format === 'pairs') {
+    if (format === 'singles') {
+      // Each player's individual stableford summed
       memberIds.forEach(pid => { pts += dayScores[pid]?.stableford || 0; });
+
+    } else if (format === 'pairs') {
+      // Pairs: consecutive pairs within the team, best score per hole counts
+      // Matches exactly what recalcPairs() shows on the scorecard
+      for (let pairIdx = 0; pairIdx * 2 + 1 < memberIds.length; pairIdx++) {
+        const pidA = memberIds[pairIdx * 2];
+        const pidB = memberIds[pairIdx * 2 + 1];
+        for (let hole = 1; hole <= 18; hole++) {
+          const i = hole - 1;
+          const ptsA = (() => {
+            const gross = dayScores[pidA]?.[`h${hole}`] || 0;
+            if (!gross) return 0;
+            const shots = Scoring.shotsOnHole(_players[pidA]?.handicap || 0, sis[i]);
+            return Scoring.stablefordPoints(gross, pars[i], shots);
+          })();
+          const ptsB = (() => {
+            const gross = dayScores[pidB]?.[`h${hole}`] || 0;
+            if (!gross) return 0;
+            const shots = Scoring.shotsOnHole(_players[pidB]?.handicap || 0, sis[i]);
+            return Scoring.stablefordPoints(gross, pars[i], shots);
+          })();
+          pts += Math.max(ptsA, ptsB);
+        }
+      }
+
     } else if (format === 'team') {
+      // Best 2 per hole on par 3/4s, best 3 on par 5s
       for (let hole = 1; hole <= 18; hole++) {
         const holePts = memberIds.map(pid => {
           const gross = dayScores[pid]?.[`h${hole}`] || 0;
