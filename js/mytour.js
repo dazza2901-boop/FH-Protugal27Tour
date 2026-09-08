@@ -159,8 +159,10 @@ const MyTourPage = (() => {
           `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:2px">${groupHtml}</div>`));
 
       } else if (day.format === 'pairs') {
-        // Pairs partner (first other player in group = the pair)
-        const partnerPid  = myGroupmates[0];
+        // Pairs partner: consecutive pairs within the group (0+1, 2+3, etc.)
+        const myIdx = allPids.indexOf(_selectedPid);
+        const partnerIdx = myIdx % 2 === 0 ? myIdx + 1 : myIdx - 1;
+        const partnerPid = (partnerIdx >= 0 && partnerIdx < allPids.length) ? allPids[partnerIdx] : null;
         const partnerName = partnerPid ? (_players[partnerPid]?.name || '?') : null;
         rows.push(infoRow('🤝', 'Pairs Partner',
           partnerName
