@@ -14,7 +14,8 @@ const Scoring = {
     if (!strokes || strokes <= 0) return 0;           // NR / no score
     const net = strokes - shots;
     const diff = net - par;
-    if (diff <= -2) return 4;   // eagle or better
+    if (diff <= -3) return 5;   // albatross or better
+    if (diff === -2) return 4;  // eagle
     if (diff === -1) return 3;  // birdie
     if (diff === 0)  return 2;  // par
     if (diff === 1)  return 1;  // bogey
@@ -77,7 +78,8 @@ const Scoring = {
   classify(strokes, par) {
     if (!strokes || strokes <= 0) return '';
     const diff = strokes - par;
-    if (diff <= -2) return 'eagle';
+    if (diff <= -3) return 'albatross';
+    if (diff === -2) return 'eagle';
     if (diff === -1) return 'birdie';
     if (diff === 0)  return 'par';
     if (diff === 1)  return 'bogey';

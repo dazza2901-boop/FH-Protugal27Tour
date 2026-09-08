@@ -36,18 +36,24 @@ const TeamsPage = (() => {
     return null;
   }
 
-  // Fixed slot → team index mapping (0-based team index)
-  // Slot 1 = lowest handicap, slot 12 = highest handicap
-  const SLOT_TEAM = {
-    1: 0,  4: 0,  9: 0, 10: 0,   // Team A
-    2: 1,  6: 1,  7: 1, 12: 1,   // Team B
-    3: 2,  5: 2,  8: 2, 11: 2    // Team C
-  };
-  const TEAM_SLOTS = [
+  // Default slot allocations — used when seeding or when a team has no stored slots
+  const DEFAULT_SLOTS = [
     [1, 4, 9, 10],   // Team A
     [2, 6, 7, 12],   // Team B
     [3, 5, 8, 11]    // Team C
   ];
+
+  // Dynamic slot → team mapping, derived from _teams data at runtime.
+  // Returns { slotTeam: {slot: teamIndex}, teamSlots: [[slots]...] }
+  function buildSlotMap() {
+    const teamEntries = Object.entries(_teams);
+    const slotTeam = {};
+    teamEntries.forEach(([, team], tIdx) => {
+      const slots = team.slots || DEFAULT_SLOTS[tIdx] || [];
+      slots.forEach(s => { slotTeam[s] = tIdx; });
+    });
+    return { slotTeam };
+  }
 
   let _teams   = {};
   let _players = {};
@@ -78,16 +84,12 @@ const TeamsPage = (() => {
       </div>
 
       ${isAdmin ? `
-      <div class="card" style="margin-top:12px;padding:12px 16px;background:#f7f8fa;border:1px solid #e5e7eb">
-        <div style="font-size:0.82rem;font-weight:700;color:#1a2332;margin-bottom:8px">📋 Slot System</div>
-        <div style="font-size:0.78rem;color:#57606a;margin-bottom:8px">
-          Players are ranked 1–12 by handicap (lowest = Slot 1). Slots are fixed to teams. When handicaps change, hit <strong>Auto-Assign</strong> to rebuild.
+      <div class="card" id="slot-editor-card" style="margin-top:12px;padding:12px 16px;background:#f7f8fa;border:1px solid #e5e7eb">
+        <div style="font-size:0.82rem;font-weight:700;color:#1a2332;margin-bottom:6px">📋 Slot Allocation</div>
+        <div style="font-size:0.78rem;color:#57606a;margin-bottom:10px">
+          Players are ranked 1–12 by handicap (lowest = Slot 1). Use <strong>＋</strong> to add a slot number to a team, or <strong>×</strong> to remove one. Each slot can only belong to one team.
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;font-size:0.78rem">
-          <span style="padding:3px 10px;border-radius:12px;background:#cc000022;border:1px solid #cc0000;color:#cc0000;font-weight:600">Team A — Slots 1, 4, 9, 10</span>
-          <span style="padding:3px 10px;border-radius:12px;background:#0055cc22;border:1px solid #0055cc;color:#0055cc;font-weight:600">Team B — Slots 2, 6, 7, 12</span>
-          <span style="padding:3px 10px;border-radius:12px;background:#007a3322;border:1px solid #007a33;color:#007a33;font-weight:600">Team C — Slots 3, 5, 8, 11</span>
-        </div>
+        <div id="slot-editor-rows"></div>
       </div>` : ''}
 
       <div id="slot-rank-table" class="card mt-12" style="overflow-x:auto"></div>
@@ -103,20 +105,26 @@ const TeamsPage = (() => {
     _unsubP = DB.on('players', d => { _players = d || {}; renderAll(); scheduleSync(); });
     _unsub  = DB.on('teams',   d => { _teams   = d || {}; renderAll(); });
 
-    // Seed default teams if none exist; migrate colors if old values still stored
+    // Seed default teams if none exist; migrate colors/slots if needed
     const existing = await DB.get('teams');
     if (!existing) {
       const batch = {};
-      for (const t of DEFAULT_TEAMS) {
-        batch[DB_pushKey()] = { ...t, playerIds: [] };
-      }
+      DEFAULT_TEAMS.forEach((t, i) => {
+        batch[DB_pushKey()] = { ...t, playerIds: [], slots: DEFAULT_SLOTS[i] };
+      });
       await DB.set('teams', batch);
     } else {
-      // Correct any team whose stored color doesn't match its name
-      for (const [tid, team] of Object.entries(existing)) {
+      const teamEntries = Object.entries(existing);
+      for (let i = 0; i < teamEntries.length; i++) {
+        const [tid, team] = teamEntries[i];
+        const updates = {};
+        // Correct color if mismatched
         const correct = canonicalColor(team.name);
-        if (correct && correct !== team.color) {
-          await DB.update(`teams/${tid}`, { color: correct });
+        if (correct && correct !== team.color) updates.color = correct;
+        // Seed default slots if not yet stored
+        if (!team.slots) updates.slots = DEFAULT_SLOTS[i] || [];
+        if (Object.keys(updates).length) {
+          await DB.update(`teams/${tid}`, updates);
         }
       }
     }
@@ -141,9 +149,10 @@ const TeamsPage = (() => {
     if (!alreadyAssigned) return; // never been assigned yet — don't auto-write
 
     const slots = computeSlots();
+    const { slotTeam } = buildSlotMap();
     const assignment = { [teamIds[0]]: [], [teamIds[1]]: [], [teamIds[2]]: [] };
     slots.forEach(({ pid, slot }) => {
-      const teamIdx = SLOT_TEAM[slot];
+      const teamIdx = slotTeam[slot];
       if (teamIdx !== undefined) assignment[teamIds[teamIdx]].push(pid);
     });
 
@@ -160,6 +169,7 @@ const TeamsPage = (() => {
   function renderAll() {
     renderSlotTable();
     renderTeams();
+    renderSlotEditor();
     injectTeamNames();
   }
 
@@ -182,6 +192,7 @@ const TeamsPage = (() => {
 
     const slots = computeSlots();
     const teamEntries = Object.entries(_teams);
+    const { slotTeam } = buildSlotMap();
 
     if (slots.length === 0) {
       el.innerHTML = '<p class="center-msg">No players yet.</p>';
@@ -190,7 +201,7 @@ const TeamsPage = (() => {
 
     const rows = slots.map(({ pid, slot }) => {
       const p    = _players[pid];
-      const teamIdx = (SLOT_TEAM[slot] ?? -1);
+      const teamIdx = (slotTeam[slot] ?? -1);
       const team    = teamEntries[teamIdx]?.[1];
       const color   = team?.color || '#ccc';
       const tname   = team?.name  || '—';
@@ -251,7 +262,7 @@ const TeamsPage = (() => {
                    onchange="TeamsPage.renameTeam('${tid}', this.value)" />`
               : `<span class="team-name">${team.name}</span>`}
             <span class="tag" style="background:${team.color}20;color:${team.color}">
-              Slots ${TEAM_SLOTS[tIdx]?.join(', ') || '—'}
+              Slots ${(team.slots || DEFAULT_SLOTS[tIdx] || []).sort((a,b)=>a-b).join(', ') || '—'}
             </span>
           </div>
           <div class="team-members">
@@ -278,11 +289,12 @@ const TeamsPage = (() => {
     if (teamIds.length < 3) { App.toast('Need 3 teams to auto-assign'); return; }
 
     const slots = computeSlots(); // [{pid, slot}] sorted by handicap
+    const { slotTeam } = buildSlotMap();
 
-    // Build new playerIds per team using fixed slot→team mapping
+    // Build new playerIds per team using current slot→team mapping
     const assignment = { [teamIds[0]]: [], [teamIds[1]]: [], [teamIds[2]]: [] };
     slots.forEach(({ pid, slot }) => {
-      const teamIdx = SLOT_TEAM[slot];
+      const teamIdx = slotTeam[slot];
       if (teamIdx !== undefined) {
         assignment[teamIds[teamIdx]].push(pid);
       }
@@ -292,6 +304,79 @@ const TeamsPage = (() => {
       await DB.update(`teams/${tid}`, { playerIds: ids });
     }
     App.toast('Teams auto-assigned by handicap slots ✓');
+  }
+
+  // ── Slot editor renderer ─────────────────────────────────
+  function renderSlotEditor() {
+    const el = document.getElementById('slot-editor-rows');
+    if (!el) return;
+    const teamEntries = Object.entries(_teams);
+    if (teamEntries.length === 0) return;
+
+    // All slots currently assigned to any team
+    const allAssigned = new Set();
+    teamEntries.forEach(([, team]) => (team.slots || []).forEach(s => allAssigned.add(s)));
+
+    el.innerHTML = teamEntries.map(([tid, team], tIdx) => {
+      const teamSlots = (team.slots || DEFAULT_SLOTS[tIdx] || []).slice().sort((a, b) => a - b);
+      const color = team.color || '#666';
+
+      const chips = teamSlots.map(s =>
+        `<span style="display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;
+          background:${color}18;border:1px solid ${color};color:${color};font-size:0.78rem;font-weight:700;margin:2px">
+          ${s}
+          <button onclick="TeamsPage.removeSlot('${tid}',${s})"
+            style="background:none;border:none;cursor:pointer;color:${color};font-size:0.85rem;font-weight:700;
+            padding:0 0 0 2px;line-height:1;opacity:0.7" title="Remove slot ${s}">×</button>
+        </span>`
+      ).join('');
+
+      // Available slots = 1–12 not already assigned to any team
+      const available = Array.from({length:12},(_,i)=>i+1).filter(n => !allAssigned.has(n));
+      const addSelect = available.length > 0
+        ? `<select onchange="TeamsPage.addSlot('${tid}', parseInt(this.value)); this.value=''"
+            style="padding:3px 6px;border:1px solid #d0d7de;border-radius:8px;font-size:0.78rem;
+            background:#fff;cursor:pointer;margin:2px;color:#1a2332">
+            <option value="">＋ Add slot</option>
+            ${available.map(n => `<option value="${n}">${n}</option>`).join('')}
+          </select>`
+        : '';
+
+      return `<div style="display:flex;align-items:center;flex-wrap:wrap;gap:4px;padding:6px 0;
+          ${tIdx < teamEntries.length - 1 ? 'border-bottom:1px solid #e5e7eb;' : ''}">
+        <span style="font-size:0.78rem;font-weight:700;color:${color};min-width:90px;flex-shrink:0">${team.name}</span>
+        <div style="display:flex;flex-wrap:wrap;gap:2px;align-items:center">
+          ${chips || '<span style="font-size:0.75rem;color:#57606a;margin:2px 4px">No slots</span>'}
+          ${addSelect}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // ── Slot mutation actions ─────────────────────────────────
+  async function addSlot(tid, slot) {
+    const team = _teams[tid];
+    if (!team) return;
+    // Remove this slot from any other team first
+    const teamEntries = Object.entries(_teams);
+    for (const [otid, oteam] of teamEntries) {
+      if (otid === tid) continue;
+      const existing = oteam.slots || [];
+      if (existing.includes(slot)) {
+        await DB.update(`teams/${otid}`, { slots: existing.filter(s => s !== slot) });
+      }
+    }
+    const current = team.slots || [];
+    if (!current.includes(slot)) {
+      await DB.update(`teams/${tid}`, { slots: [...current, slot] });
+    }
+  }
+
+  async function removeSlot(tid, slot) {
+    const team = _teams[tid];
+    if (!team) return;
+    const current = team.slots || [];
+    await DB.update(`teams/${tid}`, { slots: current.filter(s => s !== slot) });
   }
 
   // ── Other actions ────────────────────────────────────────
@@ -312,5 +397,5 @@ const TeamsPage = (() => {
     return Math.random().toString(36).slice(2, 11) + Date.now().toString(36);
   }
 
-  return { render, destroy, renameTeam, autoAssign, getTeams, getPlayers, getSlots, syncSlots: scheduleSync };
+  return { render, destroy, renameTeam, autoAssign, addSlot, removeSlot, getTeams, getPlayers, getSlots, syncSlots: scheduleSync };
 })();

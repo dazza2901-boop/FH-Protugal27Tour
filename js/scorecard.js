@@ -361,13 +361,15 @@ const ScorecardPage = (() => {
       html += `<tr class="sc-pts-row ${shade}">`;
       for (let i = 0; i < 9; i++) {
         const pts = holeStbf[i];
-        html += `<td class="sc-hole-th sc-pts-cell${i === 8 ? ' sc-nine-end' : ''}" id="pt-${pid}-${i+1}">${pts !== '' ? pts : ''}</td>`;
+        const albStyle = pts === 5 ? ' style="color:#ff6b00"' : '';
+        html += `<td class="sc-hole-th sc-pts-cell${i === 8 ? ' sc-nine-end' : ''}" id="pt-${pid}-${i+1}"${albStyle}>${pts !== '' ? pts : ''}</td>`;
       }
       const outPts = holeStbf.slice(0,9).reduce((a,v) => a + (v !== '' ? v : 0), 0);
       html += `<td class="sc-sub-th sc-pts-sub" id="outpts-${pid}">${outPts || ''}</td>`;
       for (let i = 9; i < 18; i++) {
         const pts = holeStbf[i];
-        html += `<td class="sc-hole-th sc-pts-cell" id="pt-${pid}-${i+1}">${pts !== '' ? pts : ''}</td>`;
+        const albStyle = pts === 5 ? ' style="color:#ff6b00"' : '';
+        html += `<td class="sc-hole-th sc-pts-cell" id="pt-${pid}-${i+1}"${albStyle}>${pts !== '' ? pts : ''}</td>`;
       }
       const inPts  = holeStbf.slice(9,18).reduce((a,v) => a + (v !== '' ? v : 0), 0);
       const totPts = outPts + inPts;
@@ -516,7 +518,10 @@ const ScorecardPage = (() => {
     // Update that player's stableford point cell for this hole
     const pts    = gross ? Scoring.stablefordPoints(gross, par, shots) : '';
     const ptCell = document.getElementById(`pt-${pid}-${h}`);
-    if (ptCell) ptCell.textContent = pts;
+    if (ptCell) {
+      ptCell.textContent = pts;
+      ptCell.style.color = pts === 5 ? '#ff6b00' : '';
+    }
 
     recalcPlayer(pid);
     if (_dayFormat === 'pairs') recalcPairs(_currentGroup?.playerIds || []);
@@ -837,7 +842,7 @@ const ScorecardPage = (() => {
               </button>
               
               <!-- Stableford Points Badge -->
-              <div id="sc-single-pts-${pid}" style="font-size:0.8rem;font-weight:700;color:#1a5c2a;width:48px;height:44px;text-align:center;background:#edf5f0;border:1px solid #d4edda;padding:0;border-radius:8px;display:flex;align-items:center;justify-content:center;box-sizing:border-box">
+              <div id="sc-single-pts-${pid}" style="font-size:0.8rem;font-weight:700;color:${pts === 5 ? '#ff6b00' : '#1a5c2a'};width:48px;height:44px;text-align:center;background:${pts === 5 ? '#fff3e0' : '#edf5f0'};border:1px solid ${pts === 5 ? '#ff6b00' : '#d4edda'};padding:0;border-radius:8px;display:flex;align-items:center;justify-content:center;box-sizing:border-box">
                 ${grossVal ? `${pts} pts` : '—'}
               </div>
             </div>
@@ -950,6 +955,9 @@ const ScorecardPage = (() => {
       const shots = Scoring.shotsOnHole(hcp, _sis[_currentHole - 1]);
       const pts = newVal ? Scoring.stablefordPoints(newVal, currentPar, shots) : 0;
       ptsDisplay.textContent = newVal ? `${pts} pts` : '—';
+      ptsDisplay.style.color      = pts === 5 ? '#ff6b00' : '#1a5c2a';
+      ptsDisplay.style.background = pts === 5 ? '#fff3e0' : '#edf5f0';
+      ptsDisplay.style.borderColor = pts === 5 ? '#ff6b00' : '#d4edda';
     }
   }
 
