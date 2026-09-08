@@ -354,6 +354,37 @@ const TeamsPage = (() => {
   }
 
   // ── Slot mutation actions ─────────────────────────────────
+  // After any slot change, immediately re-bake playerIds on all teams so the
+  // scoreboard and scorecard always see a consistent state. This prevents the
+  // brief window where slots and playerIds are out of sync.
+  async function rebakePlayerIds() {
+    const teamIds = Object.keys(_teams);
+    if (teamIds.length < 3) return;
+    // Read the freshest teams data from Firebase so we use the just-written slots
+    const freshTeams = await DB.get('teams');
+    if (!freshTeams) return;
+    const freshEntries = Object.entries(freshTeams);
+    const slots = computeSlots(); // [{pid, slot}] sorted by handicap rank
+
+    // Build slotTeam from fresh data
+    const slotTeam = {};
+    freshEntries.forEach(([, team], tIdx) => {
+      (team.slots || DEFAULT_SLOTS[tIdx] || []).forEach(s => { slotTeam[s] = tIdx; });
+    });
+
+    for (let tIdx = 0; tIdx < freshEntries.length; tIdx++) {
+      const [tid, team] = freshEntries[tIdx];
+      const newIds = slots
+        .filter(({ slot }) => slotTeam[slot] === tIdx)
+        .map(({ pid }) => pid);
+      const current = JSON.stringify([...(team.playerIds || [])].sort());
+      const next    = JSON.stringify([...newIds].sort());
+      if (current !== next) {
+        await DB.update(`teams/${tid}`, { playerIds: newIds });
+      }
+    }
+  }
+
   async function addSlot(tid, slot) {
     const team = _teams[tid];
     if (!team) return;
@@ -370,6 +401,7 @@ const TeamsPage = (() => {
     if (!current.includes(slot)) {
       await DB.update(`teams/${tid}`, { slots: [...current, slot] });
     }
+    await rebakePlayerIds();
   }
 
   async function removeSlot(tid, slot) {
@@ -377,6 +409,7 @@ const TeamsPage = (() => {
     if (!team) return;
     const current = team.slots || [];
     await DB.update(`teams/${tid}`, { slots: current.filter(s => s !== slot) });
+    await rebakePlayerIds();
   }
 
   // ── Other actions ────────────────────────────────────────

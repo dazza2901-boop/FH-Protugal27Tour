@@ -328,7 +328,9 @@ const ScorecardPage = (() => {
       for (let i = 0; i < 9; i++) {
         const h     = i + 1;
         const gross = existing[`h${h}`] || '';
-        const cls   = gross ? Scoring.classify(gross, _pars[i]) : '';
+        const shots = gross ? Scoring.shotsOnHole(hcp, _sis[i]) : 0;
+        const pts   = gross ? Scoring.stablefordPoints(gross, _pars[i], shots) : 0;
+        const cls   = gross ? (pts === 5 ? 'albatross' : Scoring.classify(gross, _pars[i])) : '';
         html += `<td class="sc-hole-td${i === 8 ? ' sc-nine-end' : ''}">
           <input class="sc-input ${cls}" type="number" min="1" max="15"
             id="si-${pid}-${h}" value="${gross}"
@@ -342,7 +344,9 @@ const ScorecardPage = (() => {
       for (let i = 0; i < 9; i++) {
         const h     = i + 10;
         const gross = existing[`h${h}`] || '';
-        const cls   = gross ? Scoring.classify(gross, _pars[i + 9]) : '';
+        const shots = gross ? Scoring.shotsOnHole(hcp, _sis[i + 9]) : 0;
+        const pts   = gross ? Scoring.stablefordPoints(gross, _pars[i + 9], shots) : 0;
+        const cls   = gross ? (pts === 5 ? 'albatross' : Scoring.classify(gross, _pars[i + 9])) : '';
         html += `<td class="sc-hole-td">
           <input class="sc-input ${cls}" type="number" min="1" max="15"
             id="si-${pid}-${h}" value="${gross}"
@@ -511,12 +515,13 @@ const ScorecardPage = (() => {
     const hcp   = parseInt(input.dataset.hcp) || 0;
     const gross = parseInt(input.value) || 0;
     const shots = Scoring.shotsOnHole(hcp, si);
+    const pts   = gross ? Scoring.stablefordPoints(gross, par, shots) : '';
 
-    // Update input colour
-    input.className = `sc-input ${gross ? Scoring.classify(gross, par) : ''}`;
+    // Update input colour — use pts=5 (albatross) override, else gross classify
+    const cls = gross ? (pts === 5 ? 'albatross' : Scoring.classify(gross, par)) : '';
+    input.className = `sc-input ${cls}`;
 
     // Update that player's stableford point cell for this hole
-    const pts    = gross ? Scoring.stablefordPoints(gross, par, shots) : '';
     const ptCell = document.getElementById(`pt-${pid}-${h}`);
     if (ptCell) {
       ptCell.textContent = pts;
@@ -806,8 +811,8 @@ const ScorecardPage = (() => {
       const grossVal = inputEl ? parseInt(inputEl.value) || 0 : 0;
       const pts = grossVal ? Scoring.stablefordPoints(grossVal, currentPar, shots) : 0;
 
-      // Color coding for score
-      const scoreClass = grossVal ? Scoring.classify(grossVal, currentPar) : '';
+      // Color coding for score — override with albatross when pts=5
+      const scoreClass = grossVal ? (pts === 5 ? 'albatross' : Scoring.classify(grossVal, currentPar)) : '';
 
       // Read current lost ball count from the hidden input
       const lostEl = document.getElementById(`lost-${pid}-${_currentHole}`);
@@ -940,20 +945,22 @@ const ScorecardPage = (() => {
     onInput(inputEl);
 
     // Update the displays on the single hole UI in real-time
+    const hcpSingle = effectiveHcp(pid);
+    const shotsSingle = Scoring.shotsOnHole(hcpSingle, _sis[_currentHole - 1]);
+    const ptsSingle = newVal ? Scoring.stablefordPoints(newVal, currentPar, shotsSingle) : 0;
+
     const valDisplay = document.getElementById(`sc-single-val-${pid}`);
     if (valDisplay) {
       valDisplay.textContent = newVal || '—';
-      // Apply the color classification
-      const scoreClass = newVal ? Scoring.classify(newVal, currentPar) : '';
+      // Apply colour — override with albatross when pts=5
+      const scoreClass = newVal ? (ptsSingle === 5 ? 'albatross' : Scoring.classify(newVal, currentPar)) : '';
       valDisplay.className = `sc-single-score-display ${scoreClass}`;
     }
 
     // Update stableford points on single hole UI
     const ptsDisplay = document.getElementById(`sc-single-pts-${pid}`);
     if (ptsDisplay) {
-      const hcp = effectiveHcp(pid);
-      const shots = Scoring.shotsOnHole(hcp, _sis[_currentHole - 1]);
-      const pts = newVal ? Scoring.stablefordPoints(newVal, currentPar, shots) : 0;
+      const pts = ptsSingle;
       ptsDisplay.textContent = newVal ? `${pts} pts` : '—';
       ptsDisplay.style.color      = pts === 5 ? '#ff6b00' : '#1a5c2a';
       ptsDisplay.style.background = pts === 5 ? '#fff3e0' : '#edf5f0';
