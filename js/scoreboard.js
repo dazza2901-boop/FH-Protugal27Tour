@@ -596,7 +596,7 @@ const ScoreboardPage = (() => {
       const dot = s.teamColor ? `<span class="team-color-dot" style="background:${s.teamColor}"></span>` : '';
       return `<tr style="cursor:pointer" onclick="ScoreboardPage.showPlayerDetail('${s.pid}')">
         <td><span class="pos-badge pos-${posCls}" style="${isTied ? 'font-size:0.65rem;' : ''}">${posLabel}</span></td>
-        <td>${dot}${s.name}<br><span class="text-muted" style="font-size:0.72rem">HCP ${s.handicap??'?'}</span></td>
+        <td>${dot}${s.name}</td>
         ${dayTds}
         <td class="ind-total-td">${s.total} <span style="font-size:0.65rem;color:#aaa;vertical-align:middle">›</span></td>
       </tr>`;
@@ -1599,7 +1599,7 @@ const ScoreboardPage = (() => {
       const badgeCls = pos <= 3 ? `pos-${pos}` : 'pos-n';
       return `<tr>
         <td><span class="pos-badge ${badgeCls}">${pos}</span></td>
-        <td>${dot}${s.name}<br><span class="text-muted" style="font-size:0.72rem">HCP ${s.handicap ?? '?'}</span></td>
+        <td>${dot}${s.name}</td>
         ${dayTds}
         <td class="ind-total-td" style="color:#b91c1c">${s.total}</td>
       </tr>`;
@@ -1748,7 +1748,6 @@ const ScoreboardPage = (() => {
             <span class="day-badge">Day ${d}</span>
             <span style="font-weight:700;font-size:0.9rem">${courseName}</span>
             <span class="format-badge format-${day.format||''}" style="margin-left:auto">${fmtLabel}</span>
-            <span style="font-size:0.75rem;color:#57606a">HCP&nbsp;${hcp}</span>
           </div>
           ${frontTable}${backTable}${totalStrip}
         </div>`);
@@ -1778,7 +1777,7 @@ const ScoreboardPage = (() => {
               ${teamDot}<span style="font-weight:800;font-size:1.1rem">${firstName(p.name)}</span>
             </div>
             <div style="font-size:0.78rem;color:#57606a;margin-top:2px">
-              ${team ? team.name + ' · ' : ''}HCP ${p.handicap ?? '?'} · ${daySections.length === 1 ? '1 round' : daySections.length + ' rounds'}
+              ${team ? team.name + ' · ' : ''}${daySections.length === 1 ? '1 round' : daySections.length + ' rounds'}
             </div>
           </div>
         </div>

@@ -88,6 +88,9 @@ const App = (() => {
       case 'schedule':
         SchedulePage.render(main, _isAdmin);
         break;
+      case 'mytour':
+        MyTourPage.render(main);
+        break;
       case 'players':
         PlayersPage.render(main, _isAdmin);
         break;
@@ -104,6 +107,7 @@ const App = (() => {
       scoreboard: ScoreboardPage,
       scorecard:  ScorecardPage,
       schedule:   SchedulePage,
+      mytour:     MyTourPage,
       players:    PlayersPage,
       teams:      TeamsPage
     };
