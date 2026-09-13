@@ -88,7 +88,7 @@ const ToursPage = (() => {
       teamCount: teamBased ? parseInt(document.getElementById('tour-team-count').value, 10) || 2 : 0,
       ryderCup,
       tabs,
-      scoringOptions: { bingo: tabs.bingo, ntp: tabs.ntp, matchplay: tabs.matchplay }
+      scoringOptions: { bingo: tabs.bingo, ntp: tabs.ntp, matchplay: tabs.matchplay, ryderCup }
     };
 
     if (saveButton) { saveButton.disabled = true; saveButton.textContent = 'Saving…'; }

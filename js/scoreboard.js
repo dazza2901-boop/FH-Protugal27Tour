@@ -61,7 +61,10 @@ const ScoreboardPage = (() => {
     _unsubs.push(DB.on('courses',  d => { _courses  = d || {}; refreshAll(); }));
     _unsubs.push(DB.on('config',   d => { _config   = d || {}; refreshAll(); }));
     _unsubs.push(DB.on('ntp',      d => { _ntp      = d || {}; refreshAll();  }));
-    DB.getTours().then(tours => { _tourSettings = tours[DB.activeTour()] || {}; refreshAll(); });
+    DB.getTours().then(tours => {
+      _tourSettings = tours[DB.activeTour()] || {};
+      refreshAll();
+    });
 
     for (let d = 1; d <= DAYS; d++) {
       const day = d;
@@ -215,25 +218,45 @@ const ScoreboardPage = (() => {
   const TOUR_PTS_SINGLES = [4, 3.5, 3, 2.5, 2, 1.5, 1, 0.5];
   const TOUR_PTS_PAIRS   = [4, 2.5, 1.5, 1];
 
+  function isRyderCupTour() {
+    return _tourSettings.ryderCup === true
+      || _tourSettings.ryderCup === 'true'
+      || _tourSettings.scoringOptions?.ryderCup === true
+      || _tourSettings.scoringOptions?.ryderCup === 'true';
+  }
+
   // Return { tid → tourPts } for one day
   function tourPointsForDay(dayKey) {
-    const format    = _schedule[dayKey]?.format || 'singles';
+    const format = String(_schedule[dayKey]?.format || 'singles').toLowerCase();
+    const normalizedFormat = format.replace(/[\s_-]/g, '');
+    const isMatchplayDay = normalizedFormat === 'betterball'
+      || normalizedFormat === 'matchplay'
+      || normalizedFormat.includes('matchplay')
+      || normalizedFormat.includes('betterball');
     const result    = {};
     Object.keys(_teams).forEach(tid => { result[tid] = 0; });
-    if (_tourSettings.ryderCup) {
-      if (format !== 'betterball') return result;
-      const playerTidMap = {};
-      Object.entries(_teams).forEach(([tid, team]) => (team.playerIds || []).forEach(pid => { playerTidMap[pid] = tid; }));
+
+    if (isMatchplayDay) {
+      const teamIdForPair = pair => Object.entries(_teams)
+        .find(([, team]) => pair.every(pid => (team.playerIds || []).includes(pid)))?.[0]
+        || Object.entries(_teams)
+          .find(([, team]) => (team.playerIds || []).includes(pair[0]))?.[0];
       betterballMatches(dayKey).forEach(([pairA, pairB]) => {
-        const tidA = playerTidMap[pairA[0]], tidB = playerTidMap[pairB[0]];
+        const tidA = teamIdForPair(pairA), tidB = teamIdForPair(pairB);
         if (!tidA || !tidB || tidA === tidB) return;
-        const holesUp = betterballHolesUp(pairA, pairB, dayKey);
-        if (holesUp > 0) result[tidA] += 2;
-        else if (holesUp < 0) result[tidB] += 2;
-        else result[tidA] += 1, result[tidB] += 1;
+        const match = betterballMatchStatus(pairA, pairB, dayKey);
+        if (!match.played) return;
+        if (match.holesUp > 0) result[tidA] += 2;
+        else if (match.holesUp < 0) result[tidB] += 2;
+        else {
+          result[tidA] += 1;
+          result[tidB] += 1;
+        }
       });
       return result;
     }
+
+    if (isRyderCupTour()) return result;
     const dayScores = _allScores[dayKey] || {};
 
     if (format === 'team') {
@@ -343,21 +366,26 @@ const ScoreboardPage = (() => {
     return bonus;
   }
 
-  function betterballHolesUp(pairA, pairB, dayKey) {
+  function betterballMatchStatus(pairA, pairB, dayKey) {
     const { sis } = dayParsAndSIs(dayKey);
     let holesUp = 0;
+    let played = false;
     for (let h = 1; h <= 18; h++) {
       const best = pair => Math.min(...pair.map(pid => {
         const gross = _allScores[dayKey]?.[pid]?.[`h${h}`] || 0;
         return gross ? gross - Scoring.shotsOnHole(effectiveHcp(pid, dayKey), sis[h - 1]) : 999;
       }));
       const a = best(pairA), b = best(pairB);
-      if (a !== 999 || b !== 999) {
-        if (a < b) holesUp++;
-        else if (b < a) holesUp--;
-      }
+      if (a === 999 && b === 999) continue;
+      played = true;
+      if (a < b) holesUp++;
+      else if (b < a) holesUp--;
     }
-    return holesUp;
+    return { played, holesUp };
+  }
+
+  function betterballHolesUp(pairA, pairB, dayKey) {
+    return betterballMatchStatus(pairA, pairB, dayKey).holesUp;
   }
 
   // Matchplay bonus: +1 per match win, +0.5 per draw, across all days
@@ -444,8 +472,8 @@ const ScoreboardPage = (() => {
     }
 
     const ntpBonus       = tourNTPBonus();
-    const bingoBonus     = _tourSettings.ryderCup ? {} : tourBingoBonus();
-    const matchplayBonus = _tourSettings.ryderCup ? {} : tourMatchplayBonus();
+    const bingoBonus     = isRyderCupTour() ? {} : tourBingoBonus();
+    const matchplayBonus = {};
 
     // Final standings
     const standings = teamEntries.map(([tid, team]) => {
@@ -523,7 +551,7 @@ const ScoreboardPage = (() => {
         <div style="font-weight:700;color:#1a2332;margin-bottom:6px">👥 Teams</div>
         ${legendRows}
         <div style="font-weight:700;color:#1a2332;margin:10px 0 4px">📊 Scoring Key</div>
-        ${_tourSettings.ryderCup
+        ${isRyderCupTour()
           ? '<div><span style="display:inline-block;min-width:110px;font-weight:600">Ryder Cup:</span> Matchplay win 2pts · half 1pt · NTP +0.5/win</div>'
           : '<div><span style="display:inline-block;min-width:110px;font-weight:600">Team day:</span> 1st 5pts · 2nd 3pts · 3rd 1.5pts</div>'}
         <div><span style="display:inline-block;min-width:110px;font-weight:600">Singles:</span> 4 · 3.5 · 3 · 2.5 · 2 · 1.5 · 1 · 0.5</div>
