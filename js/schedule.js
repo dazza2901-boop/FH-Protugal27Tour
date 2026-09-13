@@ -19,9 +19,10 @@ const SchedulePage = (() => {
   const FORMAT_LABELS = {
     singles: 'Singles Stableford',
     pairs:   'Pairs Stableford',
+    betterball: 'Betterball Pairs Matchplay',
     team:    'Team Day [ Best 2 (3/4s), Best 3 (5s) ]'
   };
-  const FORMAT_CLASS = { singles: 'format-singles', pairs: 'format-pairs', team: 'format-team' };
+  const FORMAT_CLASS = { singles: 'format-singles', pairs: 'format-pairs', betterball: 'format-matchplay', team: 'format-team' };
 
   // ── Render ──────────────────────────────────────────────
   function render(container, isAdmin) {
@@ -50,6 +51,7 @@ const SchedulePage = (() => {
             <select id="de-format">
               <option value="singles">Singles Stableford</option>
               <option value="pairs">Pairs Stableford</option>
+              <option value="betterball">Betterball Pairs Matchplay</option>
               <option value="team">Team Day [ Best 2 (3/4s), Best 3 (5s) ]</option>
             </select>
           </div>
@@ -202,11 +204,7 @@ const SchedulePage = (() => {
           </div>
           ${groups.map((g, gi) => {
             const teeMin   = timeToMin(day.teeTime || '08:00') + gi * 10;
-            const slotList = computeSlots();
-            const slots    = g.slots || (g.playerIds || []).map(pid =>
-              slotList.find(s => s.pid === pid)?.slot
-            ).filter(Boolean);
-            const pids  = slots.map(s => slotList.find(sl => sl.slot === s)?.pid).filter(Boolean);
+            const pids = groupPlayerIds(g);
             const names = pids.map(pid => _players[pid]?.name || '?').join(' · ') || 'Empty group';
             return `<div class="grouping-row">
               <span class="tee-time-badge">${minToTime(teeMin)}</span>
@@ -249,54 +247,35 @@ const SchedulePage = (() => {
       ).join('');
   }
 
-  // ── Slot helpers (mirrors teams.js logic) ────────────────
-  // Returns [{pid, slot}] sorted by handicap asc
-  function computeSlots() {
-    return Object.entries(_players)
-      .sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99))
-      .map(([pid], i) => ({ pid, slot: i + 1 }));
+  // ── Player helpers ───────────────────────────────────────
+  function groupPlayerIds(group) {
+    if (Array.isArray(group?.playerIds)) return group.playerIds;
+    if (!Array.isArray(group?.slots) || group.slots.length === 0) return [];
+    const sorted = Object.entries(_players)
+      .sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99));
+    return group.slots.map(slot => sorted[slot - 1]?.[0]).filter(Boolean);
   }
-  function slotToPid(slot) {
-    return computeSlots().find(s => s.slot === slot)?.pid || null;
-  }
-  function pidToSlot(pid) {
-    return computeSlots().find(s => s.pid === pid)?.slot || null;
+
+  function playerOptions(selectedPid) {
+    return `<option value="">— Player —</option>` + Object.entries(_players)
+      .map(([pid, player]) => `<option value="${pid}"${pid === selectedPid ? ' selected' : ''}>${player.name}</option>`)
+      .join('');
   }
 
   function renderGroupingsEditor(groups) {
     const container = document.getElementById('groupings-editor');
     if (!container) return;
-    const slotOptions = buildSlotOptions();
-
-    container.innerHTML = groups.map((g, gi) => buildGroupRowHTML(gi, slotOptions)).join('');
-
-    // Restore existing slot selections
-    // Support both new format (g.slots) and legacy (g.playerIds converted back to slots)
-    groups.forEach((g, gi) => {
-      const slots = g.slots || (g.playerIds || []).map(pid => pidToSlot(pid)).filter(Boolean);
-      slots.forEach((slot, pi) => {
-        const sel = document.getElementById(`g-${gi}-p${pi}`);
-        if (sel) sel.value = slot;
-      });
-    });
+    container.innerHTML = groups.map((g, gi) => buildGroupRowHTML(gi, groupPlayerIds(g))).join('');
   }
 
-  function buildSlotOptions() {
-    // Just numbered slots 1-12 — no names attached so they stay stable
-    return Array.from({length: 12}, (_, i) => {
-      const slot = i + 1;
-      return `<option value="${slot}">Player ${slot}</option>`;
-    }).join('');
-  }
-
-  function buildGroupRowHTML(gi, slotOptions) {
+  function buildGroupRowHTML(gi, playerIds) {
     const selStyle = 'flex:1;padding:6px;border-radius:6px;border:1.5px solid #d0d7de;min-width:0;font-size:0.82rem;min-width:90px';
     return `<div class="grouping-row" id="group-row-${gi}" style="flex-wrap:wrap;gap:6px">
       <span class="tee-time-badge" style="background:#888">G${gi+1}</span>
-      <select id="g-${gi}-p0" style="${selStyle}"><option value="">P…</option>${slotOptions}</select>
-      <select id="g-${gi}-p1" style="${selStyle}"><option value="">P…</option>${slotOptions}</select>
-      <select id="g-${gi}-p2" style="${selStyle}"><option value="">P…</option>${slotOptions}</select>
-      <select id="g-${gi}-p3" style="${selStyle}"><option value="">P…</option>${slotOptions}</select>
+      <select id="g-${gi}-p0" style="${selStyle}">${playerOptions(playerIds[0])}</select>
+      <select id="g-${gi}-p1" style="${selStyle}">${playerOptions(playerIds[1])}</select>
+      <select id="g-${gi}-p2" style="${selStyle}">${playerOptions(playerIds[2])}</select>
+      <select id="g-${gi}-p3" style="${selStyle}">${playerOptions(playerIds[3])}</select>
       <button onclick="SchedulePage.removeGroupRow(${gi})"
         style="background:none;border:none;font-size:1.1rem;cursor:pointer;color:#d93025;flex-shrink:0">✕</button>
     </div>`;
@@ -305,15 +284,23 @@ const SchedulePage = (() => {
   function addGroupRow() {
     const container = document.getElementById('groupings-editor');
     const gi = container.querySelectorAll('.grouping-row').length;
-    const slotOptions = buildSlotOptions();
     const div = document.createElement('div');
-    div.innerHTML = buildGroupRowHTML(gi, slotOptions);
+    div.innerHTML = buildGroupRowHTML(gi, []);
     container.appendChild(div.firstElementChild);
   }
 
   function removeGroupRow(gi) {
     const row = document.getElementById(`group-row-${gi}`);
-    if (row) row.remove();
+    if (!row) return;
+    row.remove();
+    document.querySelectorAll('#groupings-editor .grouping-row').forEach((groupRow, index) => {
+      groupRow.id = `group-row-${index}`;
+      groupRow.querySelectorAll('select').forEach((select, playerIndex) => {
+        select.id = `g-${index}-p${playerIndex}`;
+      });
+      const removeButton = groupRow.querySelector('button');
+      if (removeButton) removeButton.setAttribute('onclick', `SchedulePage.removeGroupRow(${index})`);
+    });
   }
 
   async function saveDay() {
@@ -328,17 +315,21 @@ const SchedulePage = (() => {
 
     const rows = document.querySelectorAll('#groupings-editor .grouping-row');
     const groupings = [];
-    rows.forEach((_, gi) => {
-      const slots = [0,1,2,3]
-        .map(pi => parseInt(document.getElementById(`g-${gi}-p${pi}`)?.value, 10) || null)
+    rows.forEach(row => {
+      const playerIds = [...row.querySelectorAll('select')]
+        .map(select => select.value)
         .filter(Boolean);
-      if (slots.length > 0) {
-        // Store slots (stable) AND resolve current playerIds for scorecard/scoring use
-        groupings.push({ slots, playerIds: slots.map(s => slotToPid(s)).filter(Boolean) });
+      if (playerIds.length > 0) {
+        groupings.push({ playerIds });
       }
     });
 
     await DB.update(`schedule/${_editDay}`, { label, format, teeTime, busPickup, busReturn, scoringNote, courseId, groupings });
+    const savedDay = await DB.get(`schedule/${_editDay}`);
+    if (savedDay?.format !== format) {
+      App.toast('Schedule format could not be verified');
+      return;
+    }
     App.toast('Day saved ✓');
     closeEditor();
   }

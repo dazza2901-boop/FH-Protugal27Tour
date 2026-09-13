@@ -125,6 +125,13 @@ if (_firebaseReady) {
 }
 
 const ROOT = 'tournament';
+const LEGACY_TOUR_ID = 'cascais';
+let _activeTourId = sessionStorage.getItem('golf_active_tour') || LEGACY_TOUR_ID;
+
+function tourPath(path) {
+  // Cascais remains on the original database paths so existing data is untouched.
+  return _activeTourId === LEGACY_TOUR_ID ? `${ROOT}/${path}` : `${ROOT}/tours/${_activeTourId}/${path}`;
+}
 
 // ============================================================
 //  Unified DB interface — same API regardless of backend
@@ -132,58 +139,48 @@ const ROOT = 'tournament';
 const DB = {
 
   get(path) {
+    const resolved = tourPath(path);
     if (db) {
-      return db.ref(`${ROOT}/${path}`).once('value').then(s => s.val());
+      return db.ref(resolved).once('value').then(s => s.val());
     }
-    return Promise.resolve(lsGet(`${ROOT}/${path}`));
+    return Promise.resolve(lsGet(resolved));
   },
 
   set(path, data) {
-    if (db) {
-      return db.ref(`${ROOT}/${path}`).set(data);
-    }
-    lsSet(`${ROOT}/${path}`, data);
-    lsNotify(`${ROOT}/${path}`);
-    return Promise.resolve();
+    const resolved = tourPath(path);
+    if (db) return db.ref(resolved).set(data);
+    lsSet(resolved, data); lsNotify(resolved); return Promise.resolve();
   },
 
   update(path, data) {
-    if (db) {
-      return db.ref(`${ROOT}/${path}`).update(data);
-    }
-    lsUpdate(`${ROOT}/${path}`, data);
-    lsNotify(`${ROOT}/${path}`);
-    return Promise.resolve();
+    const resolved = tourPath(path);
+    if (db) return db.ref(resolved).update(data);
+    lsUpdate(resolved, data); lsNotify(resolved); return Promise.resolve();
   },
 
   push(path, data) {
-    if (db) {
-      return db.ref(`${ROOT}/${path}`).push(data);
-    }
-    lsPush(`${ROOT}/${path}`, data);
-    lsNotify(`${ROOT}/${path}`);
-    return Promise.resolve();
+    const resolved = tourPath(path);
+    if (db) return db.ref(resolved).push(data);
+    lsPush(resolved, data); lsNotify(resolved); return Promise.resolve();
   },
 
   remove(path) {
-    if (db) {
-      return db.ref(`${ROOT}/${path}`).remove();
-    }
-    lsRemove(`${ROOT}/${path}`);
-    lsNotify(`${ROOT}/${path}`);
-    return Promise.resolve();
+    const resolved = tourPath(path);
+    if (db) return db.ref(resolved).remove();
+    lsRemove(resolved); lsNotify(resolved); return Promise.resolve();
   },
 
   // Realtime listener — returns unsubscribe fn
   on(path, callback) {
+    const resolved = tourPath(path);
     if (db) {
-      const r = db.ref(`${ROOT}/${path}`);
+      const r = db.ref(resolved);
       const handler = snap => callback(snap.val());
       r.on('value', handler);
       return () => r.off('value', handler);
     }
     // localStorage mode: register listener and fire immediately
-    const fullPath = `${ROOT}/${path}`;
+    const fullPath = resolved;
     if (!_lsListeners[fullPath]) _lsListeners[fullPath] = [];
     _lsListeners[fullPath].push(callback);
     // Fire immediately with current value
@@ -191,11 +188,55 @@ const DB = {
     return () => {
       _lsListeners[fullPath] = (_lsListeners[fullPath] || []).filter(cb => cb !== callback);
     };
+  },
+  selectTour(id) {
+    _activeTourId = id || LEGACY_TOUR_ID;
+    sessionStorage.setItem('golf_active_tour', _activeTourId);
+  },
+  activeTour() { return _activeTourId; },
+  getTours() {
+    return db ? db.ref(`${ROOT}/tourRegistry`).once('value').then(s => s.val() || {})
+      : Promise.resolve(lsGet(`${ROOT}/tourRegistry`) || {});
+  },
+  setTourMeta(id, data) {
+    const path = `${ROOT}/tourRegistry/${id}`;
+    if (db) return db.ref(path).update(data);
+    lsUpdate(path, data);
+    lsNotify(path);
+    return Promise.resolve();
+  },
+  async initTour(id, data) {
+    const old = _activeTourId;
+    this.selectTour(id);
+    await this.setTourMeta(id, data);
+    if (!(await this.get('config'))) {
+      const rounds = Math.max(1, Number(data.rounds) || 5);
+      await this.set('config', { tournamentName: data.name, year: new Date().getFullYear(), currentDay: 1, adminPin: '1234', days: rounds });
+      const formats = ['singles', 'pairs', 'singles', 'team', 'pairs'];
+      const schedule = {};
+      for (let d = 1; d <= rounds; d++) schedule[`day${d}`] = { label: `Day ${d}`, format: formats[d - 1] || 'singles', scoringNote: '', teeTime: '08:00', groupings: [] };
+      await this.set('schedule', schedule);
+    }
+    this.selectTour(old);
   }
 };
 
 // ── Seed default data on first run ──────────────────────────
 async function seedIfEmpty() {
+  const registry = await DB.getTours();
+  if (!registry || !registry[LEGACY_TOUR_ID]) {
+    await DB.setTourMeta(LEGACY_TOUR_ID, {
+      name: 'TOETS Cascais 2027', playerCount: 12, teamBased: true, teamCount: 3,
+      tabs: { tour:true, dailyfocus:true, individual:true, bingo:true, ntp:true, matchplay:true, lostballs:true },
+      scoringOptions: { bingo: true, ntp: true, matchplay: true }
+    });
+  } else if (registry[LEGACY_TOUR_ID].teamBased === undefined) {
+    await DB.setTourMeta(LEGACY_TOUR_ID, {
+      teamBased: true,
+      teamCount: 3,
+      tabs: { tour:true, dailyfocus:true, individual:true, bingo:true, ntp:true, matchplay:true, lostballs:true }
+    });
+  }
   const config = await DB.get('config');
   if (!config) {
     await DB.set('config', {
@@ -205,8 +246,6 @@ async function seedIfEmpty() {
       adminPin: '1234',
       days: 5
     });
-  } else if (config.tournamentName !== 'TOETS Cascais 2027') {
-    await DB.update('config', { tournamentName: 'TOETS Cascais 2027' });
   }
 
   const schedule = await DB.get('schedule');
@@ -223,14 +262,6 @@ async function seedIfEmpty() {
       };
     }
     await DB.set('schedule', days);
-  } else {
-    // Ensure correct formats for each day
-    const requiredFormats = { day1:'team', day2:'pairs', day3:'singles', day4:'team', day5:'pairs' };
-    for (const [dk, fmt] of Object.entries(requiredFormats)) {
-      if (schedule[dk] && schedule[dk].format !== fmt) {
-        await DB.update(`schedule/${dk}`, { format: fmt });
-      }
-    }
   }
 }
 

@@ -5,21 +5,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <title>⛳ TOETS Cascais 2027</title>
+  <title>⛳ Darren's Tour App</title>
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
   <!-- Header -->
   <header id="app-header">
     <div class="header-inner">
-      <span id="header-title">⛳ TOETS Cascais 2027</span>
+      <span id="header-title">⛳ Darren's Tour App</span>
       <button id="admin-btn" class="btn-icon" title="Admin">⚙️</button>
     </div>
     <nav id="main-nav">
+      <button class="nav-btn" data-page="tours">⛳ Tours</button>
       <button class="nav-btn active" data-page="scoreboard">🏆 Leaderboard</button>
       <button class="nav-btn" data-page="scorecard">📝 Scores</button>
       <button class="nav-btn" data-page="schedule">📅 Schedule</button>
       <button class="nav-btn" data-page="mytour">🗺️ My Tour</button>
+      <button class="nav-btn admin-only hidden" data-page="touradmin">⚙️ Tour Settings</button>
       <button class="nav-btn admin-only hidden" data-page="players">👤 Players</button>
       <button class="nav-btn admin-only hidden" data-page="teams">🏌️ Teams</button>
     </nav>
@@ -53,6 +55,7 @@
 
   <!-- App modules -->
   <script src="js/firebase.js"></script>
+  <script src="js/tours.js"></script>
   <script src="js/scoring.js"></script>
   <script src="js/players.js"></script>
   <script src="js/teams.js"></script>

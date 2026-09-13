@@ -232,6 +232,12 @@ body {
 .format-singles { background: #e3f0ff; color: #1a5c9a; }
 .format-pairs   { background: #fff3cd; color: #856404; }
 .format-team    { background: #d4edda; color: #155724; }
+.format-matchplay { background: #f3e8ff; color: #6b21a8; }
+.tour-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+.tour-card { display:flex; flex-direction:column; gap:6px; align-items:flex-start; padding:18px; border:2px solid #e5e7eb; border-radius:12px; background:#fff; color:#1a2332; text-align:left; cursor:pointer; font:inherit; }
+.tour-card.selected { border-color:#1a5c2a; background:#f0f8f2; }
+.tour-card span { color:#57606a; font-size:.82rem; }
+.check-grid { display:grid; gap:8px; font-size:.9rem; }
 
 .grouping-row {
   display: flex;

@@ -18,12 +18,14 @@ const ScoreboardPage = (() => {
   let _ntp       = {};   // { day1: { 3: { winnerId, winnerName }, … }, … }
   let _ntpUnsub  = null;
   let _isAdmin   = false;
+  let _tourSettings = {};
 
-  const DAYS = 5;
-  const FORMAT_SHORT = { singles:'Singles', pairs:'Pairs', team:'Team' };
+  let DAYS = 5;
+  const FORMAT_SHORT = { singles:'Singles', pairs:'Pairs', betterball:'Betterball Matchplay', team:'Team' };
 
   // ── Render shell ─────────────────────────────────────────
   function render(container, isAdmin) {
+    DAYS = Math.max(1, Number(sessionStorage.getItem('golf_rounds') || 5));
     _isAdmin = isAdmin || false;
     container.innerHTML = `<div class="page">
       <div class="flex-between mt-8">
@@ -59,6 +61,7 @@ const ScoreboardPage = (() => {
     _unsubs.push(DB.on('courses',  d => { _courses  = d || {}; refreshAll(); }));
     _unsubs.push(DB.on('config',   d => { _config   = d || {}; refreshAll(); }));
     _unsubs.push(DB.on('ntp',      d => { _ntp      = d || {}; refreshAll();  }));
+    DB.getTours().then(tours => { _tourSettings = tours[DB.activeTour()] || {}; refreshAll(); });
 
     for (let d = 1; d <= DAYS; d++) {
       const day = d;
@@ -92,6 +95,21 @@ const ScoreboardPage = (() => {
   // Effective handicap for a player on a specific day:
   // uses the day's shot allocation if set, otherwise falls back to player's index handicap.
   function effectiveHcp(pid, dayKey) {
+    if (_schedule[dayKey]?.format === 'betterball') {
+      const sorted = Object.entries(_players)
+        .sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99));
+      const group = (_schedule[dayKey]?.groupings || []).find(g => {
+        const ids = Array.isArray(g.playerIds)
+          ? g.playerIds
+          : (Array.isArray(g.slots) ? g.slots.map(slot => sorted[slot - 1]?.[0]).filter(Boolean) : []);
+        return ids.includes(pid);
+      });
+      const groupIds = Array.isArray(group?.playerIds)
+        ? group.playerIds
+        : (Array.isArray(group?.slots) ? group.slots.map(slot => sorted[slot - 1]?.[0]).filter(Boolean) : [pid]);
+      const lowest = Math.min(...groupIds.map(id => Number(_players[id]?.handicap || 0)));
+      return Math.round(Math.max(0, (Number(_players[pid]?.handicap || 0) - lowest) * 0.9));
+    }
     const alloc = _dayHcps[dayKey]?.[pid];
     if (alloc !== undefined && alloc !== null && alloc !== '') return Number(alloc);
     return _players[pid]?.handicap || 0;
@@ -116,9 +134,13 @@ const ScoreboardPage = (() => {
   // Extract all pairs for a day from schedule groupings (consecutive pairs within each group)
   function dayPairs(dayKey) {
     const groupings = _schedule[dayKey]?.groupings || [];
+    const sorted = Object.entries(_players)
+      .sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99));
     const pairs = [];
     groupings.forEach(g => {
-      const ids = g.playerIds || [];
+      const ids = Array.isArray(g.playerIds)
+        ? g.playerIds
+        : (Array.isArray(g.slots) ? g.slots.map(slot => sorted[slot - 1]?.[0]).filter(Boolean) : []);
       for (let i = 0; i + 1 < ids.length; i += 2) {
         pairs.push([ids[i], ids[i + 1]]);
       }
@@ -133,7 +155,18 @@ const ScoreboardPage = (() => {
     const { pars, sis } = dayParsAndSIs(dayKey);
     let pts = 0;
 
-    if (format === 'singles') {
+    if (format === 'betterball') {
+      const pairs = dayPairs(dayKey);
+      pairs.forEach(([a, b]) => {
+        for (let hole = 1; hole <= 18; hole++) {
+          const i = hole - 1;
+          const ga = dayScores[a]?.[`h${hole}`] || 0, gb = dayScores[b]?.[`h${hole}`] || 0;
+          const pa = ga ? Scoring.stablefordPoints(ga, pars[i], Scoring.shotsOnHole(effectiveHcp(a, dayKey), sis[i])) : 0;
+          const pb = gb ? Scoring.stablefordPoints(gb, pars[i], Scoring.shotsOnHole(effectiveHcp(b, dayKey), sis[i])) : 0;
+          pts += Math.max(pa, pb);
+        }
+      });
+    } else if (format === 'singles') {
       // Individual stableford values were saved with the correct day handicap — use them directly
       memberIds.forEach(pid => { pts += dayScores[pid]?.stableford || 0; });
 
@@ -185,9 +218,23 @@ const ScoreboardPage = (() => {
   // Return { tid → tourPts } for one day
   function tourPointsForDay(dayKey) {
     const format    = _schedule[dayKey]?.format || 'singles';
-    const dayScores = _allScores[dayKey] || {};
     const result    = {};
     Object.keys(_teams).forEach(tid => { result[tid] = 0; });
+    if (_tourSettings.ryderCup) {
+      if (format !== 'betterball') return result;
+      const playerTidMap = {};
+      Object.entries(_teams).forEach(([tid, team]) => (team.playerIds || []).forEach(pid => { playerTidMap[pid] = tid; }));
+      betterballMatches(dayKey).forEach(([pairA, pairB]) => {
+        const tidA = playerTidMap[pairA[0]], tidB = playerTidMap[pairB[0]];
+        if (!tidA || !tidB || tidA === tidB) return;
+        const holesUp = betterballHolesUp(pairA, pairB, dayKey);
+        if (holesUp > 0) result[tidA] += 2;
+        else if (holesUp < 0) result[tidB] += 2;
+        else result[tidA] += 1, result[tidB] += 1;
+      });
+      return result;
+    }
+    const dayScores = _allScores[dayKey] || {};
 
     if (format === 'team') {
       // Rank teams by their stableford aggregate with countback tiebreak.
@@ -238,6 +285,15 @@ const ScoreboardPage = (() => {
         if (team) result[team.tid] = (result[team.tid] || 0) + (TOUR_PTS_SINGLES[idx] || 0);
       });
 
+    } else if (format === 'betterball') {
+      const playerTidMap = {};
+      Object.entries(_teams).forEach(([tid, team]) => (team.playerIds || []).forEach(pid => { playerTidMap[pid] = tid; }));
+      dayPairs(dayKey).forEach(([a, b]) => {
+        const tid = playerTidMap[a];
+        if (!tid || playerTidMap[b] !== tid) return;
+        const scores = matchplayPairResult(a, b, dayKey);
+        if (scores.played) result[tid] = (result[tid] || 0) + (scores.win ? 2 : 1);
+      });
     } else if (format === 'pairs') {
       // Build pairs from schedule groupings (consecutive within each group).
       // Rank all pairs globally with countback tiebreak; credit their shared team.
@@ -285,6 +341,23 @@ const ScoreboardPage = (() => {
       });
     });
     return bonus;
+  }
+
+  function betterballHolesUp(pairA, pairB, dayKey) {
+    const { sis } = dayParsAndSIs(dayKey);
+    let holesUp = 0;
+    for (let h = 1; h <= 18; h++) {
+      const best = pair => Math.min(...pair.map(pid => {
+        const gross = _allScores[dayKey]?.[pid]?.[`h${h}`] || 0;
+        return gross ? gross - Scoring.shotsOnHole(effectiveHcp(pid, dayKey), sis[h - 1]) : 999;
+      }));
+      const a = best(pairA), b = best(pairB);
+      if (a !== 999 || b !== 999) {
+        if (a < b) holesUp++;
+        else if (b < a) holesUp--;
+      }
+    }
+    return holesUp;
   }
 
   // Matchplay bonus: +1 per match win, +0.5 per draw, across all days
@@ -371,8 +444,8 @@ const ScoreboardPage = (() => {
     }
 
     const ntpBonus       = tourNTPBonus();
-    const bingoBonus     = tourBingoBonus();
-    const matchplayBonus = tourMatchplayBonus();
+    const bingoBonus     = _tourSettings.ryderCup ? {} : tourBingoBonus();
+    const matchplayBonus = _tourSettings.ryderCup ? {} : tourMatchplayBonus();
 
     // Final standings
     const standings = teamEntries.map(([tid, team]) => {
@@ -450,7 +523,9 @@ const ScoreboardPage = (() => {
         <div style="font-weight:700;color:#1a2332;margin-bottom:6px">👥 Teams</div>
         ${legendRows}
         <div style="font-weight:700;color:#1a2332;margin:10px 0 4px">📊 Scoring Key</div>
-        <div><span style="display:inline-block;min-width:110px;font-weight:600">Team day:</span> 1st 5pts · 2nd 3pts · 3rd 1.5pts</div>
+        ${_tourSettings.ryderCup
+          ? '<div><span style="display:inline-block;min-width:110px;font-weight:600">Ryder Cup:</span> Matchplay win 2pts · half 1pt · NTP +0.5/win</div>'
+          : '<div><span style="display:inline-block;min-width:110px;font-weight:600">Team day:</span> 1st 5pts · 2nd 3pts · 3rd 1.5pts</div>'}
         <div><span style="display:inline-block;min-width:110px;font-weight:600">Singles:</span> 4 · 3.5 · 3 · 2.5 · 2 · 1.5 · 1 · 0.5</div>
         <div><span style="display:inline-block;min-width:110px;font-weight:600">Pairs:</span> 4 · 2.5 · 1.5 · 1</div>
         <div><span style="display:inline-block;min-width:110px;font-weight:600">Bonus:</span> NTP +0.5/win · Bingo F9/B9 +1 · Matchplay W+1 D+0.5</div>
@@ -911,7 +986,7 @@ const ScoreboardPage = (() => {
     memberIds.forEach(pid => {
       const gross = dayScores[pid]?.[`h${hole}`] || 0;
       if (!gross) return;
-      const shots = Scoring.shotsOnHole(_players[pid]?.handicap || 0, sis[hole - 1]);
+      const shots = Scoring.shotsOnHole(effectiveHcp(pid, dayKey), sis[hole - 1]);
       const pts   = Scoring.stablefordPoints(gross, pars[hole - 1], shots);
       if (pts > best) best = pts;
     });
@@ -919,6 +994,22 @@ const ScoreboardPage = (() => {
   }
 
   // Returns { won, halved, lost, holesUp } for teamA vs teamB on a given day
+  function matchplayPairResult(a, b, dayKey) {
+    const pair = [a, b];
+    const all = dayPairs(dayKey);
+    const opponent = all.find(([x, y]) => x !== a && x !== b && !pair.includes(x) && !pair.includes(y));
+    if (!opponent) return { played: false };
+    const { pars, sis } = dayParsAndSIs(dayKey);
+    let up = 0, played = false;
+    for (let h = 1; h <= 18; h++) {
+      const best = ids => Math.min(...ids.map(pid => { const g = _allScores[dayKey]?.[pid]?.[`h${h}`] || 0; return g ? g - Scoring.shotsOnHole(effectiveHcp(pid, dayKey), sis[h - 1]) : 999; }));
+      const mine = best(pair), theirs = best(opponent);
+      if (mine === 999 && theirs === 999) continue;
+      played = true; if (mine < theirs) up++; else if (mine > theirs) up--;
+    }
+    return { played, win: up > 0, half: up === 0 };
+  }
+
   function matchResult(teamAIds, teamBIds, dayKey, pars, sis) {
     let won = 0, halved = 0, lost = 0;
     for (let h = 1; h <= 18; h++) {
@@ -932,12 +1023,68 @@ const ScoreboardPage = (() => {
     return { won, halved, lost, holesUp: won - lost };
   }
 
+  function betterballMatches(dayKey) {
+    const sorted = Object.entries(_players)
+      .sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99));
+    return (_schedule[dayKey]?.groupings || []).flatMap(group => {
+      const ids = Array.isArray(group.playerIds)
+        ? group.playerIds
+        : (Array.isArray(group.slots) ? group.slots.map(slot => sorted[slot - 1]?.[0]).filter(Boolean) : []);
+      const matches = [];
+      for (let i = 0; i + 3 < ids.length; i += 4) {
+        matches.push([[ids[i], ids[i + 1]], [ids[i + 2], ids[i + 3]]]);
+      }
+      return matches;
+    });
+  }
+
+  function renderBetterballMatch(pairA, pairB, dayKey, pars, sis) {
+    const dayScores = _allScores[dayKey] || {};
+    const holes = Array.from({ length: 18 }, (_, index) => {
+      const currentHole = index + 1;
+      const values = pair => Math.min(...pair.map(pid => {
+        const gross = dayScores[pid]?.[`h${currentHole}`] || 0;
+        return gross ? gross - Scoring.shotsOnHole(effectiveHcp(pid, dayKey), sis[index]) : 999;
+      }));
+      const a = values(pairA), b = values(pairB);
+      return { hole: currentHole, result: a === 999 && b === 999 ? 'none' : a < b ? 'a' : b < a ? 'b' : 'half' };
+    });
+    const pairName = pair => pair.map(pid => _players[pid]?.name || '?').join(' / ');
+    const pairColor = pair => {
+      const team = playerTeam(pair[0]);
+      const name = (team?.name || '').toLowerCase();
+      if (name.includes('eagle')) return '#cc0000';
+      if (name.includes('par')) return '#007a33';
+      if (name.includes('birdie')) return '#0055cc';
+      return team?.color || '#1a5c2a';
+    };
+    let running = 0;
+    const cells = holes.map(({ result }) => {
+      if (result === 'a') running++;
+      else if (result === 'b') running--;
+      if (result === 'none') return '<td style="padding:7px;text-align:center;color:#bbb;border:1px solid #e5e7eb">·</td>';
+      const text = running === 0 ? 'A/S' : `${Math.abs(running)}UP`;
+      const color = running > 0 ? pairColor(pairA) : running < 0 ? pairColor(pairB) : '#6b7280';
+      return `<td style="padding:7px 3px;text-align:center;border:1px solid #e5e7eb;background:${running === 0 ? '#f3f4f6' : color};color:${running === 0 ? '#374151' : '#fff'};font-weight:700;font-size:.72rem">${text}</td>`;
+    }).join('');
+    return `<div class="card" style="margin-bottom:14px;overflow-x:auto">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;font-size:.85rem;font-weight:700">
+        <span style="color:${pairColor(pairA)}">${pairName(pairA)}</span><span style="color:#9ca3af">vs</span><span style="color:${pairColor(pairB)}">${pairName(pairB)}</span>
+      </div>
+      <table style="border-collapse:collapse;width:100%;min-width:520px;table-layout:fixed"><tbody>
+        <tr><td style="padding:7px;text-align:left;border:1px solid #e5e7eb;background:#f7f8fa;font-size:.72rem;width:72px">Hole</td>${holes.map(h => `<td style="padding:7px 3px;text-align:center;border:1px solid #e5e7eb;background:#f7f8fa;font-size:.72rem">${h.hole}</td>`).join('')}</tr>
+        <tr><td style="padding:7px;text-align:left;border:1px solid #e5e7eb;background:#f7f8fa;font-size:.72rem">Match</td>${cells}</tr>
+      </tbody></table>
+    </div>`;
+  }
+
   function renderMatchplay() {
     const el = document.getElementById('sb-matchplay');
     if (!el) return;
 
     const teamEntries = Object.entries(_teams);
-    if (teamEntries.length < 2) {
+    const hasBetterball = Object.values(_schedule).some(day => day.format === 'betterball');
+    if (teamEntries.length < 2 && !hasBetterball) {
       el.innerHTML = '<p class="center-msg">Need at least 2 teams for matchplay.</p>';
       return;
     }
@@ -956,6 +1103,12 @@ const ScoreboardPage = (() => {
       const dayKey = `day${dayNum}`;
       const day    = _schedule[dayKey] || {};
       const { pars, sis } = dayParsAndSIs(dayKey);
+
+      // Betterball matchplay is displayed as pair-v-pair matches: players 1/2
+      // against players 3/4 in each four-player grouping.
+      if (day.format === 'betterball') {
+        return `<div class="card"><div class="card-header" style="margin-bottom:10px"><div style="display:flex;gap:8px;align-items:center"><span class="day-badge">Day ${dayNum}</span><span style="font-weight:600">${day.label || `Day ${dayNum}`}</span></div><span class="format-badge format-matchplay">Betterball Matchplay</span></div>${betterballMatches(dayKey).map(([a, b]) => renderBetterballMatch(a, b, dayKey, pars, sis)).join('') || '<p class="text-muted">No four-player groups configured.</p>'}</div>`;
+      }
 
       // Check any scores exist this day
       const hasScores = teamEntries.some(([, team]) =>
@@ -1113,6 +1266,11 @@ const ScoreboardPage = (() => {
       </div>`;
     }).join('');
 
+    if (teamEntries.length < 2) {
+      el.innerHTML = dayBlocks;
+      return;
+    }
+
     // ── Overall standings ──────────────────────────────────
     // Sum W/H/L and holesUp across all days for every match pair per team
     const overall = {}; // { tid: { w, h, l, holesUp, matchPts } }
@@ -1129,14 +1287,14 @@ const ScoreboardPage = (() => {
         overall[tidB].holesUp -= res.holesUp;
 
         if (res.holesUp > 0) {
-          overall[tidA].w++;  overall[tidA].matchPts += 1;
+          overall[tidA].w++;  overall[tidA].matchPts += 2;
           overall[tidB].l++;
         } else if (res.holesUp < 0) {
-          overall[tidB].w++;  overall[tidB].matchPts += 1;
+          overall[tidB].w++;  overall[tidB].matchPts += 2;
           overall[tidA].l++;
         } else {
-          overall[tidA].h++;  overall[tidA].matchPts += 0.5;
-          overall[tidB].h++;  overall[tidB].matchPts += 0.5;
+          overall[tidA].h++;  overall[tidA].matchPts += 1;
+          overall[tidB].h++;  overall[tidB].matchPts += 1;
         }
       });
     }
@@ -1179,12 +1337,65 @@ const ScoreboardPage = (() => {
           <tbody>${standingsRows}</tbody>
         </table>
         <div style="font-size:0.75rem;color:#57606a;margin-top:8px">
-          W=1pt · H=0.5pt · L=0pt · Holes Up used as tiebreaker
+          W=2pt · H=1pt · L=0pt · Holes Up used as tiebreaker
         </div>
       </div>
 
       <div class="card-title" style="margin-bottom:8px">Results by Day</div>
       ${dayBlocks}`;
+  }
+
+  function dailyMatchplayBlock(dayKey) {
+    if (_schedule[dayKey]?.format !== 'betterball') return '';
+    const teamForPlayer = pid => Object.entries(_teams).find(([, team]) => (team.playerIds || []).includes(pid));
+    const colorForTeam = team => {
+      const name = (team?.name || '').toLowerCase();
+      if (name.includes('eagle')) return '#cc0000';
+      if (name.includes('par')) return '#007a33';
+      if (name.includes('birdie')) return '#0055cc';
+      return team?.color || '#1a5c2a';
+    };
+    const matches = betterballMatches(dayKey);
+    if (matches.length === 0) return '';
+    const cards = matches.map(([pairA, pairB]) => {
+      const entryA = teamForPlayer(pairA[0]);
+      const entryB = teamForPlayer(pairB[0]);
+      const teamA = entryA?.[1] || {};
+      const teamB = entryB?.[1] || {};
+      const colorA = colorForTeam(teamA);
+      const colorB = colorForTeam(teamB);
+      const holesUp = betterballHolesUp(pairA, pairB, dayKey);
+      const playedHoles = pairA.concat(pairB).reduce((count, pid) => {
+        const scores = _allScores[dayKey]?.[pid] || {};
+        return Math.max(count, Object.keys(scores).filter(key => /^h\d+$/.test(key)).length);
+      }, 0);
+      const remainingHoles = Math.max(0, 18 - playedHoles);
+      const played = playedHoles > 0;
+      const leadingA = holesUp > 0;
+      const leadingB = holesUp < 0;
+      const winningMargin = Math.abs(holesUp);
+      const matchWon = winningMargin > remainingHoles;
+      const result = !played
+        ? 'Not played'
+        : holesUp === 0
+          ? 'A/S'
+          : matchWon && remainingHoles > 0
+            ? `Win ${winningMargin}&${remainingHoles}`
+            : `${winningMargin}UP`;
+      const side = (pair, team, color, leading, reverse = false) => `
+        <div style="min-height:62px;display:flex;flex-direction:column;justify-content:center;gap:7px;padding:10px 18px;background:${leading ? color : '#fff'};color:${leading ? '#fff' : '#172554'};text-align:${reverse ? 'left' : 'right'}">
+          ${pair.map(pid => `<span style="font-size:.9rem;font-weight:${leading ? '700' : '600'};text-decoration:underline">${_players[pid]?.name || pid}</span>`).join('')}
+        </div>`;
+      return `<div style="display:grid;grid-template-columns:minmax(0,1fr) 110px minmax(0,1fr);align-items:stretch;border-top:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;margin-bottom:1px">
+        ${side(pairA, teamA, colorA, leadingA)}
+        <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;background:#fff;border-left:1px solid #cbd5e1;border-right:1px solid #cbd5e1;color:${holesUp > 0 ? colorA : holesUp < 0 ? colorB : '#777'}">
+          <span style="font-size:.72rem;color:#777;text-transform:uppercase">${played ? 'Current' : 'Status'}</span>
+          <strong style="font-size:1.15rem">${result}</strong>
+        </div>
+        ${side(pairB, teamB, colorB, leadingB, true)}
+      </div>`;
+    }).join('');
+    return `<div class="card" style="padding:0;overflow:hidden;margin-bottom:14px"><div class="card-title" style="padding:14px 16px 10px">⚔️ Match Leaderboard</div>${cards}</div>`;
   }
 
   // ── Daily tab ─────────────────────────────────────────────
@@ -1508,6 +1719,8 @@ const ScoreboardPage = (() => {
         <span style="font-weight:700">${_courses[day.courseId]?.name || day.label || dayKey.replace('day','Day ')}</span>
         <span class="format-badge format-${day.format || ''}" style="margin-left:auto">${fmt}</span>
       </div>
+
+      ${dailyMatchplayBlock(dayKey)}
 
       <!-- Team leaderboard (team day only) -->
       ${teamLeaderboardHtml}

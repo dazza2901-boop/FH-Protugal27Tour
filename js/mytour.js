@@ -16,9 +16,10 @@ const MyTourPage = (() => {
   const FORMAT_LABELS = {
     singles: 'Singles Stableford',
     pairs:   'Pairs Stableford',
+    betterball: 'Betterball Pairs Matchplay',
     team:    'Team Day'
   };
-  const FORMAT_CLASS = { singles: 'format-singles', pairs: 'format-pairs', team: 'format-team' };
+  const FORMAT_CLASS = { singles: 'format-singles', pairs: 'format-pairs', betterball: 'format-matchplay', team: 'format-team' };
 
   // ── Render ──────────────────────────────────────────────
   function render(container) {
@@ -91,16 +92,14 @@ const MyTourPage = (() => {
       return;
     }
 
-    // Build slot map (rank by handicap asc, slot 1 = lowest)
-    const slots = Object.entries(_players)
+    const legacySlots = Object.entries(_players)
       .sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99))
       .map(([pid], i) => ({ pid, slot: i + 1 }));
-    const mySlot = slots.find(s => s.pid === _selectedPid)?.slot ?? null;
 
-    el.innerHTML = days.map(([key, day]) => buildDayCard(key, day, slots, mySlot)).join('');
+    el.innerHTML = days.map(([key, day]) => buildDayCard(key, day, legacySlots)).join('');
   }
 
-  function buildDayCard(key, day, slots, mySlot) {
+  function buildDayCard(key, day, slots) {
     const dayNum   = key.replace('day', '');
     const course   = day.courseId ? _courses[day.courseId] : null;
     const fmt      = FORMAT_LABELS[day.format] || day.format || '—';
@@ -227,12 +226,11 @@ const MyTourPage = (() => {
 
   // ── Helpers ──────────────────────────────────────────────
   function resolvePids(group, slots) {
-    if (group.slots) {
-      return group.slots
-        .map(s => slots.find(sl => sl.slot === s)?.pid)
-        .filter(Boolean);
-    }
-    return (group.playerIds || []);
+    if (Array.isArray(group?.playerIds)) return group.playerIds;
+    if (!Array.isArray(group?.slots)) return [];
+    return group.slots
+      .map(s => slots.find(sl => sl.slot === s)?.pid)
+      .filter(Boolean);
   }
 
   function infoRow(icon, label, valueHtml) {

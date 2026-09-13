@@ -15,12 +15,9 @@ const App = (() => {
     // Correct team colors by name on every startup (name is source of truth)
     _fixTeamColors();
 
-    // Load config for tournament name
+    // Load config without replacing the application header.
     DB.on('config', cfg => {
       _config = cfg || {};
-      if (cfg?.tournamentName) {
-        document.getElementById('header-title').textContent = `⛳ ${cfg.tournamentName}`;
-      }
     });
 
     // Restore admin state from session
@@ -55,8 +52,9 @@ const App = (() => {
       if (e.key === 'Enter') confirmPin();
     };
 
-    // Navigate to default page
-    navigate('scoreboard');
+    // Open with the tour selector so users choose the tour to view.
+    navigate('tours');
+    setTimeout(applyTourSettings, 0);
 
     // Hide loading
     document.getElementById('loading')?.remove();
@@ -79,6 +77,12 @@ const App = (() => {
 
     // Mount new page
     switch (page) {
+      case 'tours':
+        ToursPage.render(main);
+        break;
+      case 'touradmin':
+        ToursPage.renderAdmin(main);
+        break;
       case 'scoreboard':
         ScoreboardPage.render(main, _isAdmin);
         break;
@@ -100,10 +104,13 @@ const App = (() => {
       default:
         main.innerHTML = '<p class="center-msg">Page not found.</p>';
     }
+    setTimeout(applyTourSettings, 0);
   }
 
   function destroyCurrentPage() {
     const destroyers = {
+      tours:      ToursPage,
+      touradmin:  ToursPage,
       scoreboard: ScoreboardPage,
       scorecard:  ScorecardPage,
       schedule:   SchedulePage,
@@ -137,6 +144,7 @@ const App = (() => {
       showAdminNav();
       toast('Admin mode unlocked ✓');
       navigate(_currentPage);
+      applyTourSettings();
     } else {
       document.getElementById('admin-pin-error').classList.remove('hidden');
       document.getElementById('admin-pin-input').select();
@@ -191,8 +199,31 @@ const App = (() => {
     _toastTimer = setTimeout(() => el.classList.add('hidden'), duration);
   }
 
+  async function applyTourSettings() {
+    const tours = await DB.getTours();
+    const tour = tours[DB.activeTour()] || {};
+    sessionStorage.setItem('golf_rounds', String(tour.rounds || tour.days || 5));
+    document.querySelectorAll('.nav-btn[data-page]').forEach(btn => {
+      const visible = btn.dataset.page === 'tours' || btn.dataset.page === 'scoreboard' || btn.dataset.page === 'scorecard' || btn.dataset.page === 'schedule' || btn.dataset.page === 'mytour' || (btn.dataset.page === 'teams' && !!tour.teamBased) || (btn.dataset.page === 'touradmin' && _isAdmin) || (btn.dataset.page === 'players' && _isAdmin);
+      btn.classList.toggle('hidden', !visible);
+    });
+    const tabs = tour.tabs || {};
+    const tabMap = { tour:'tour', dailyfocus:'dailyfocus', individual:'individual', bingo:'bingo', ntp:'ntp', matchplay:'matchplay', lostballs:'lostballs' };
+    Object.entries(tabMap).forEach(([key, value]) => {
+      const tab = document.querySelector(`.tab-btn[data-tab="${value}"]`);
+      if (tab) tab.classList.toggle('hidden', tabs[key] === false || (!tour.teamBased && key !== 'individual'));
+    });
+    document.querySelector('.nav-btn[data-page="teams"]')?.classList.toggle('hidden', !tour.teamBased);
+    if (_currentPage === 'scoreboard') {
+      const firstTab = !tour.teamBased
+        ? document.querySelector('.tab-btn[data-tab="individual"]:not(.hidden)')
+        : document.querySelector('.tab-btn:not(.hidden)');
+      firstTab?.click();
+    }
+  }
+
   // ── Expose ───────────────────────────────────────────────
-  return { init, navigate, toast, isAdmin: () => _isAdmin };
+  return { init, navigate, toast, isAdmin: () => _isAdmin, applyTourSettings };
 })();
 
 // ── Boot ──────────────────────────────────────────────────

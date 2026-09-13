@@ -14,7 +14,9 @@ const ScorecardPage = (() => {
   let _unsub     = null;
   let _unsubP    = null;
   let _unsubS    = null;
-  let _unsubH    = null;   // listener for dayHandicaps
+  let _unsubH     = null;   // listener for dayHandicaps
+  let _tourTeamBased = true;
+  let _teams = {};
   let _currentDay   = 1;
   let _currentGroup = null;
   let _dayFormat    = 'singles';
@@ -31,6 +33,24 @@ const ScorecardPage = (() => {
   // ── Effective handicap for a player on the current day ───
   // Returns the explicitly allocated shots for today, or 0 if none set.
   // Shot allocation is always entered manually — no index fallback.
+  function matchShotAllocations(playerIds = _currentGroup?.playerIds || []) {
+    const stablefordShots = {};
+    playerIds.forEach(pid => {
+      const input = document.getElementById(`sa-${pid}`)?.value;
+      const stored = _dayHcp[pid];
+      stablefordShots[pid] = input !== undefined && input !== ''
+        ? Number(input)
+        : stored !== undefined && stored !== null && stored !== ''
+          ? Number(stored)
+          : Number(_players[pid]?.handicap || 0);
+    });
+    const lowest = Math.min(...playerIds.map(pid => stablefordShots[pid]));
+    return Object.fromEntries(playerIds.map(pid => [
+      pid,
+      Math.round(Math.max(0, (stablefordShots[pid] - lowest) * 0.9))
+    ]));
+  }
+
   function effectiveHcp(pid) {
     const v = _dayHcp[pid];
     if (v !== undefined && v !== null && v !== '') return Number(v);
@@ -49,7 +69,7 @@ const ScorecardPage = (() => {
           <div class="form-group">
             <label>Select Day</label>
             <select id="sc-day-select">
-              ${[1,2,3,4,5].map(d => `<option value="${d}">Day ${d}</option>`).join('')}
+              ${Array.from({ length: Number(sessionStorage.getItem('golf_rounds') || 5) }, (_, i) => `<option value="${i + 1}">Day ${i + 1}</option>`).join('')}
             </select>
           </div>
           <div class="form-group">
@@ -82,7 +102,7 @@ const ScorecardPage = (() => {
           <!-- 18-Hole Grid Table View -->
           <div id="sc-table-view">
             <div id="sc-table-wrap"></div>
-            <button class="btn-primary" style="width:100%;margin-top:14px" id="sc-save-btn" onclick="ScorecardPage.saveAllScores()">
+            <button type="button" class="btn-primary" style="width:100%;margin-top:14px" id="sc-save-btn" onclick="ScorecardPage.saveAllScores()">
               💾 Save All Scores
             </button>
             <button class="btn" style="width:100%;margin-top:8px;color:#c0392b;border-color:#c0392b" id="sc-reset-btn" onclick="ScorecardPage.resetAllScores()">
@@ -146,7 +166,12 @@ const ScorecardPage = (() => {
     });
 
     DB.get(`schedule/day${dayNum}`).then(async day => {
+      const tours = await DB.getTours();
+      _tourTeamBased = tours[DB.activeTour()]?.teamBased !== false;
+      _teams = await DB.get('teams') || {};
       _dayFormat = day?.format || 'singles';
+      const showMatchplayShots = _dayFormat === 'betterball';
+      document.getElementById('shot-alloc-card')?.classList.toggle('hidden', !showMatchplayShots && !_tourTeamBased);
       const courseId = day?.courseId;
       if (courseId) {
         const course = await DB.get(`courses/${courseId}`);
@@ -158,7 +183,7 @@ const ScorecardPage = (() => {
         _sis  = Scoring.defaultSIs();
         _courseName = '';
       }
-      const fmtLabel = { singles:'Singles Stableford', pairs:'Pairs Stableford', team:'Team Day [ Best 2 (3/4s), Best 3 (5s) ]' };
+      const fmtLabel = { singles:'Singles Stableford', pairs:'Pairs Stableford', betterball:'Betterball Pairs Matchplay', team:'Team Day [ Best 2 (3/4s), Best 3 (5s) ]' };
       const info = document.getElementById('sc-day-info');
       if (info) info.textContent = day
         ? `${day.label || `Day ${dayNum}`} · ${fmtLabel[day.format] || day.format} · Tee: ${day.teeTime || '—'}${_courseName ? ` · ${_courseName}` : ''}`
@@ -167,18 +192,19 @@ const ScorecardPage = (() => {
     });
   }
 
-  // Resolve a stored group (may have .slots or legacy .playerIds) to live playerIds
+  // Resolve stored groups by player ID. Legacy slot groups are converted only
+  // when no player IDs were saved, preserving saved assignments thereafter.
   function resolveGroup(g) {
     if (!g) return { playerIds: [] };
-    if (g.slots && g.slots.length > 0) {
-      const sorted = Object.entries(_players)
-        .sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99));
-      const playerIds = g.slots
-        .map(slot => sorted[slot - 1]?.[0])
-        .filter(Boolean);
-      return { ...g, playerIds };
-    }
-    return g; // legacy: already has playerIds
+    if (Array.isArray(g.playerIds)) return { ...g, playerIds: g.playerIds };
+    const sorted = Object.entries(_players)
+      .sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99));
+    return {
+      ...g,
+      playerIds: Array.isArray(g.slots)
+        ? g.slots.map(slot => sorted[slot - 1]?.[0]).filter(Boolean)
+        : []
+    };
   }
 
   function populateGroupSelect(day) {
@@ -194,9 +220,7 @@ const ScorecardPage = (() => {
     sel.innerHTML = `<option value="">— Select group —</option>` +
       groups.map((g, i) => {
         const resolved = resolveGroup(g);
-        const label = g.slots
-          ? `Group ${i + 1}: Players ${g.slots.join(', ')}`
-          : `Group ${i + 1}: ${resolved.playerIds.map(pid => _players[pid]?.name || '?').join(', ')}`;
+        const label = `Group ${i + 1}: ${resolved.playerIds.map(pid => _players[pid]?.name || '?').join(', ')}`;
         return `<option value="${i}">${label}</option>`;
       }).join('');
     if (groups.length === 1) {
@@ -236,7 +260,7 @@ const ScorecardPage = (() => {
     const groupTitle = document.getElementById('sc-group-title');
     if (groupTitle) groupTitle.textContent = playerIds.map(pid => _players[pid]?.name || pid).join(' · ');
 
-    const fmtLabel = { singles:'Singles', pairs:'Pairs', team:'Team Day [ Best 2 (3/4s), Best 3 (5s) ]' };
+    const fmtLabel = { singles:'Singles', pairs:'Pairs', betterball:'Betterball Pairs Matchplay', team:'Team Day [ Best 2 (3/4s), Best 3 (5s) ]' };
     const tag = document.getElementById('sc-format-tag');
     if (tag) {
       tag.textContent = fmtLabel[_dayFormat] || _dayFormat;
@@ -306,7 +330,7 @@ const ScorecardPage = (() => {
       });
 
       // Show allocated shots for today (or "—" if not yet set)
-      const hasAlloc   = _dayHcp[pid] !== undefined && _dayHcp[pid] !== null && _dayHcp[pid] !== '';
+      const hasAlloc   = _dayFormat === 'betterball' || (_dayHcp[pid] !== undefined && _dayHcp[pid] !== null && _dayHcp[pid] !== '');
       const hcpDisplay = hasAlloc
         ? `<strong style="color:#1a5c2a">${hcp} shot${hcp !== 1 ? 's' : ''}</strong>`
         : `<span style="color:#c0392b;font-size:0.7rem">shots not set</span>`;
@@ -406,8 +430,16 @@ const ScorecardPage = (() => {
       }
     });
 
-    // ── Group contribution row (singles + team only — not pairs) ──
-    if (_dayFormat !== 'pairs') {
+    if (_dayFormat === 'betterball' && playerIds.length >= 4) {
+      html += `<tr class="sc-pair-row" id="matchplay-row">
+        <td class="sc-name-th sc-pair-label">Matchplay</td>
+        ${Array.from({length: 18}, (_, i) => `<td class="sc-hole-th sc-pair-cell${i === 8 ? ' sc-nine-end' : ''}" id="mp-${i + 1}"></td>`).join('')}
+        <td class="sc-sub-th"></td><td class="sc-sub-th"></td><td class="sc-sub-th"></td><td class="sc-sub-th"></td>
+      </tr>`;
+    }
+
+    // ── Group contribution row (team formats only) ──
+    if (_tourTeamBased && _dayFormat !== 'pairs' && _dayFormat !== 'betterball') {
       const contribLabel = {
         singles: `Best 1 (Singles)`,
         team:    `Best 2 (P3/4) · Best 3 (P5)`
@@ -436,13 +468,72 @@ const ScorecardPage = (() => {
     // Fill in totals for all players, pair rows, and contribution row
     playerIds.forEach(pid => recalcPlayer(pid));
     if (_dayFormat === 'pairs') recalcPairs(playerIds);
+    else if (_dayFormat === 'betterball') recalcMatchplayRow(playerIds);
     else recalcContrib(playerIds);
 
-    // Render the shot allocation panel for players in this group
-    renderShotAlloc(playerIds);
+    // Render the matchplay shot panel only for Betterball Matchplay.
+    if (_dayFormat === 'betterball') {
+      renderMatchplayPanel(playerIds);
+      recalcMatchplayRow(playerIds);
+    } else {
+      renderShotAlloc(playerIds);
+    }
 
     // Ensure the correct view (18-hole or single-hole) is maintained and rendered
     toggleView(_activeView);
+  }
+
+  function playerTeamColor(pid) {
+    const team = Object.values(_teams).find(t => (t.playerIds || []).includes(pid));
+    const name = (team?.name || '').toLowerCase();
+    if (name.includes('eagle')) return '#cc0000';
+    if (name.includes('par')) return '#007a33';
+    if (name.includes('birdie')) return '#0055cc';
+    return team?.color || '#1a5c2a';
+  }
+
+  function recalcMatchplayRow(playerIds) {
+    const row = document.getElementById('matchplay-row');
+    if (!row || playerIds.length < 4) return;
+    const pairA = playerIds.slice(0, 2), pairB = playerIds.slice(2, 4);
+    let running = 0;
+    for (let h = 1; h <= 18; h++) {
+      const best = pair => Math.min(...pair.map(pid => {
+        const gross = parseInt(document.getElementById(`si-${pid}-${h}`)?.value, 10) || 0;
+        const matchShots = matchShotAllocations(playerIds)[pid];
+        return gross ? gross - Scoring.shotsOnHole(matchShots, _sis[h - 1]) : 999;
+      }));
+      const a = best(pairA), b = best(pairB);
+      const cell = document.getElementById(`mp-${h}`);
+      if (!cell) continue;
+      if (a === 999 && b === 999) { cell.textContent = '—'; cell.style.cssText = ''; continue; }
+      if (a < b) running++;
+      else if (b < a) running--;
+      const tied = running === 0;
+      const color = tied ? '#374151' : '#fff';
+      const background = tied ? '#e5e7eb' : running > 0 ? playerTeamColor(pairA[0]) : playerTeamColor(pairB[0]);
+      cell.textContent = tied ? 'A/S' : `${Math.abs(running)}UP`;
+      cell.style.setProperty('font-weight', '700', 'important');
+      cell.style.setProperty('color', color, 'important');
+      cell.style.setProperty('background', background, 'important');
+    }
+  }
+
+  function renderMatchplayPanel(playerIds) {
+    const title = document.querySelector('#shot-alloc-card .card-title');
+    const note = document.querySelector('#shot-alloc-card .text-muted');
+    if (title) title.innerHTML = '⚔️ Betterball Matchplay Shots — Day <span id="sa-day-label">' + _currentDay + '</span>';
+    if (note) note.textContent = 'Stableford shots are entered in the first column. Matchplay shots are calculated from the lowest handicap in the four-player group.';
+    renderShotAlloc(playerIds);
+    updateMatchplayShotInputs(playerIds);
+  }
+
+  function updateMatchplayShotInputs(playerIds) {
+    const matchShots = matchShotAllocations(playerIds);
+    playerIds.forEach(pid => {
+      const input = document.getElementById(`match-sa-${pid}`);
+      if (input) input.value = matchShots[pid];
+    });
   }
 
   // ── Shot Allocation panel ────────────────────────────────
@@ -454,18 +545,20 @@ const ScorecardPage = (() => {
       const p      = _players[pid];
       const stored = _dayHcp[pid];
       const hasVal = stored !== undefined && stored !== null && stored !== '';
+      const matchShots = null;
       return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0">
         <div style="flex:1;min-width:0">
           <div style="font-weight:600;font-size:0.9rem">${esc(p?.name || pid)}</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-          <label style="font-size:0.78rem;color:#57606a;white-space:nowrap">Shots today</label>
+          <label style="font-size:0.72rem;color:#57606a;white-space:nowrap">Stableford shots</label>
           <input type="text" inputmode="numeric" pattern="[0-9]*" id="sa-${pid}"
             value="${hasVal ? stored : ''}"
             placeholder="—"
             style="width:64px;padding:7px 8px;border:1.5px solid ${hasVal ? '#1a5c2a' : '#d0d7de'};border-radius:7px;font-size:1rem;text-align:center;font-weight:700;color:${hasVal ? '#1a5c2a' : '#1a2332'};-webkit-appearance:none;appearance:none"
             oninput="this.value=this.value.replace(/[^0-9]/g,'');this.style.borderColor=this.value!==''?'#1a5c2a':'#d0d7de';this.style.color=this.value!==''?'#1a5c2a':'#1a2332'"
           />
+          ${_dayFormat === 'betterball' ? `<label style="font-size:0.72rem;color:#57606a;white-space:nowrap">Match shots</label><input type="text" id="match-sa-${pid}" value="${matchShots}" disabled style="width:54px;padding:7px 8px;border:1.5px solid #6b21a8;border-radius:7px;font-size:1rem;text-align:center;font-weight:700;color:#6b21a8;background:#f3e8ff" />` : ''}
         </div>
       </div>`;
     }).join('') + (playerIds.length === 0 ? '<p class="text-muted">No players in this group.</p>' : '');
@@ -530,7 +623,10 @@ const ScorecardPage = (() => {
 
     recalcPlayer(pid);
     if (_dayFormat === 'pairs') recalcPairs(_currentGroup?.playerIds || []);
-    recalcContrib(_currentGroup?.playerIds || []);
+    if (_dayFormat === 'betterball') {
+      updateMatchplayShotInputs(_currentGroup?.playerIds || []);
+      recalcMatchplayRow(_currentGroup?.playerIds || []);
+    } else recalcContrib(_currentGroup?.playerIds || []);
   }
 
   // ── Recalc player totals ─────────────────────────────────
@@ -641,7 +737,9 @@ const ScorecardPage = (() => {
       });
 
       let contrib = 0;
-      if (_dayFormat === 'team') {
+      if (_dayFormat === 'betterball') {
+        contrib = Math.max(...pts, 0);
+      } else if (_dayFormat === 'team') {
         const sorted = [...pts].sort((a, b) => b - a);
         const count  = _pars[i] === 5 ? 3 : 2;
         for (let k = 0; k < count; k++) contrib += sorted[k] || 0;
