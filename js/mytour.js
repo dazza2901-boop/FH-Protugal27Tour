@@ -199,6 +199,14 @@ const MyTourPage = (() => {
     // Pickup from course
     rows.push(infoRow('🚌', 'Pickup from Course', day.busReturn ? `<strong>${fmt12(day.busReturn)}</strong>` : '<span class="text-muted">—</span>'));
 
+    // Restaurant booking
+    if (day.restaurant) {
+      const bookingVal = day.bookingTime
+        ? `<strong>${day.restaurant}</strong> <span style="color:#57606a">· ${fmt12(day.bookingTime)}</span>`
+        : `<strong>${day.restaurant}</strong>`;
+      rows.push(infoRow('🍽️', 'Restaurant', bookingVal));
+    }
+
     // Scoring notes
     if (day.scoringNote) {
       rows.push(infoRow('📝', 'Notes', `<span style="color:#57606a">${day.scoringNote}</span>`));

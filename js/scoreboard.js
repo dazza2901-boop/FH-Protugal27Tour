@@ -110,8 +110,14 @@ const ScoreboardPage = (() => {
       const groupIds = Array.isArray(group?.playerIds)
         ? group.playerIds
         : (Array.isArray(group?.slots) ? group.slots.map(slot => sorted[slot - 1]?.[0]).filter(Boolean) : [pid]);
-      const lowest = Math.min(...groupIds.map(id => Number(_players[id]?.handicap || 0)));
-      return Math.round(Math.max(0, (Number(_players[pid]?.handicap || 0) - lowest) * 0.9));
+      const hcpFor = id => {
+        const dayAlloc = _dayHcps[dayKey]?.[id];
+        return (dayAlloc !== undefined && dayAlloc !== null && dayAlloc !== '')
+          ? Number(dayAlloc)
+          : Number(_players[id]?.handicap || 0);
+      };
+      const lowest = Math.min(...groupIds.map(id => hcpFor(id)));
+      return Math.round(Math.max(0, (hcpFor(pid) - lowest) * 0.9));
     }
     const alloc = _dayHcps[dayKey]?.[pid];
     if (alloc !== undefined && alloc !== null && alloc !== '') return Number(alloc);
@@ -227,12 +233,8 @@ const ScoreboardPage = (() => {
 
   // Return { tid → tourPts } for one day
   function tourPointsForDay(dayKey) {
-    const format = String(_schedule[dayKey]?.format || 'singles').toLowerCase();
-    const normalizedFormat = format.replace(/[\s_-]/g, '');
-    const isMatchplayDay = normalizedFormat === 'betterball'
-      || normalizedFormat === 'matchplay'
-      || normalizedFormat.includes('matchplay')
-      || normalizedFormat.includes('betterball');
+    const format = _schedule[dayKey]?.format || 'singles';
+    const isMatchplayDay = format === 'betterball' || format === 'matchplay';
     const result    = {};
     Object.keys(_teams).forEach(tid => { result[tid] = 0; });
 
@@ -308,15 +310,6 @@ const ScoreboardPage = (() => {
         if (team) result[team.tid] = (result[team.tid] || 0) + (TOUR_PTS_SINGLES[idx] || 0);
       });
 
-    } else if (format === 'betterball') {
-      const playerTidMap = {};
-      Object.entries(_teams).forEach(([tid, team]) => (team.playerIds || []).forEach(pid => { playerTidMap[pid] = tid; }));
-      dayPairs(dayKey).forEach(([a, b]) => {
-        const tid = playerTidMap[a];
-        if (!tid || playerTidMap[b] !== tid) return;
-        const scores = matchplayPairResult(a, b, dayKey);
-        if (scores.played) result[tid] = (result[tid] || 0) + (scores.win ? 2 : 1);
-      });
     } else if (format === 'pairs') {
       // Build pairs from schedule groupings (consecutive within each group).
       // Rank all pairs globally with countback tiebreak; credit their shared team.
@@ -473,7 +466,7 @@ const ScoreboardPage = (() => {
 
     const ntpBonus       = tourNTPBonus();
     const bingoBonus     = isRyderCupTour() ? {} : tourBingoBonus();
-    const matchplayBonus = {};
+    const matchplayBonus = isRyderCupTour() ? {} : tourMatchplayBonus();
 
     // Final standings
     const standings = teamEntries.map(([tid, team]) => {
@@ -545,19 +538,35 @@ const ScoreboardPage = (() => {
         <span style="color:#57606a">${t.members.join(', ')}</span>
       </div>`).join('');
 
-    // Scoring key
-    const keyHtml = `
+    // Scoring key — only show if this is a team tour, only show formats actually used
+    const isTeamTour = Object.keys(_teams).length > 0;
+    const usedFormats = new Set(Object.values(_schedule).map(d => d.format).filter(Boolean));
+    const keyLines = [];
+    if (isRyderCupTour()) {
+      keyLines.push('<div><span style="display:inline-block;min-width:110px;font-weight:600">Ryder Cup:</span> Matchplay win 2pts · half 1pt · NTP +0.5/win</div>');
+    } else {
+      if (usedFormats.has('team'))       keyLines.push('<div><span style="display:inline-block;min-width:110px;font-weight:600">Team day:</span> 1st 5pts · 2nd 3pts · 3rd 1.5pts</div>');
+      if (usedFormats.has('singles'))    keyLines.push('<div><span style="display:inline-block;min-width:110px;font-weight:600">Singles:</span> 4 · 3.5 · 3 · 2.5 · 2 · 1.5 · 1 · 0.5</div>');
+      if (usedFormats.has('pairs'))      keyLines.push('<div><span style="display:inline-block;min-width:110px;font-weight:600">Pairs:</span> 4 · 2.5 · 1.5 · 1</div>');
+      if (usedFormats.has('betterball')) keyLines.push('<div><span style="display:inline-block;min-width:110px;font-weight:600">Matchplay:</span> Win +1 · Draw +0.5</div>');
+    }
+    const bonusParts = [];
+    if (_tourSettings.scoringOptions?.ntp   || _tourSettings.tabs?.ntp)   bonusParts.push('NTP +0.5/win');
+    if (_tourSettings.scoringOptions?.bingo || _tourSettings.tabs?.bingo) bonusParts.push('Bingo F9/B9 +1');
+    if (usedFormats.has('betterball') && !isRyderCupTour())               bonusParts.push('Matchplay W+1 D+0.5');
+    if (bonusParts.length) keyLines.push(`<div><span style="display:inline-block;min-width:110px;font-weight:600">Bonus:</span> ${bonusParts.join(' · ')}</div>`);
+
+    const keyHtml = isTeamTour && keyLines.length ? `
       <div style="margin-top:14px;padding:10px 12px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:8px;font-size:0.78rem;line-height:1.9">
         <div style="font-weight:700;color:#1a2332;margin-bottom:6px">👥 Teams</div>
         ${legendRows}
         <div style="font-weight:700;color:#1a2332;margin:10px 0 4px">📊 Scoring Key</div>
-        ${isRyderCupTour()
-          ? '<div><span style="display:inline-block;min-width:110px;font-weight:600">Ryder Cup:</span> Matchplay win 2pts · half 1pt · NTP +0.5/win</div>'
-          : '<div><span style="display:inline-block;min-width:110px;font-weight:600">Team day:</span> 1st 5pts · 2nd 3pts · 3rd 1.5pts</div>'}
-        <div><span style="display:inline-block;min-width:110px;font-weight:600">Singles:</span> 4 · 3.5 · 3 · 2.5 · 2 · 1.5 · 1 · 0.5</div>
-        <div><span style="display:inline-block;min-width:110px;font-weight:600">Pairs:</span> 4 · 2.5 · 1.5 · 1</div>
-        <div><span style="display:inline-block;min-width:110px;font-weight:600">Bonus:</span> NTP +0.5/win · Bingo F9/B9 +1 · Matchplay W+1 D+0.5</div>
-      </div>`;
+        ${keyLines.join('')}
+      </div>` : isTeamTour ? `
+      <div style="margin-top:14px;padding:10px 12px;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:8px;font-size:0.78rem;line-height:1.9">
+        <div style="font-weight:700;color:#1a2332;margin-bottom:6px">👥 Teams</div>
+        ${legendRows}
+      </div>` : '';
 
     el.innerHTML = `
       <div class="card sb-tour-card">

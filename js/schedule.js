@@ -76,6 +76,16 @@ const SchedulePage = (() => {
             <input type="time" id="de-busreturn" value="16:00" />
           </div>
         </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>🍽️ Restaurant Name (optional)</label>
+            <input type="text" id="de-restaurant" placeholder="e.g. The Clubhouse" />
+          </div>
+          <div class="form-group">
+            <label>⏰ Booking Time (optional)</label>
+            <input type="time" id="de-bookingtime" />
+          </div>
+        </div>
         <div class="form-group">
           <label>Scoring Notes (optional)</label>
           <input type="text" id="de-notes" placeholder="e.g. 10 pt for hole-in-one" />
@@ -211,6 +221,11 @@ const SchedulePage = (() => {
               <span>${names}</span>
             </div>`;
           }).join('')}
+          ${day.restaurant ? `
+          <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:10px;padding:8px 10px;background:#fff8f0;border-radius:8px;border:1px solid #f5d9b0;font-size:0.82rem">
+            <span>🍽️ <strong>${day.restaurant}</strong></span>
+            ${day.bookingTime ? `<span>⏰ <strong>Booked:</strong> ${day.bookingTime}</span>` : ''}
+          </div>` : ''}
           ${_isAdmin ? `<p class="text-muted mt-8" style="font-size:0.75rem">Tap to edit</p>` : ''}
         </div>`;
     }).join('');
@@ -224,9 +239,11 @@ const SchedulePage = (() => {
     document.getElementById('de-label').value     = day.label       || `Day ${dayKey.replace('day','')}`;
     document.getElementById('de-format').value    = day.format      || 'singles';
     document.getElementById('de-teetime').value   = day.teeTime     || '08:00';
-    document.getElementById('de-buspickup').value = day.busPickup   || '';
-    document.getElementById('de-busreturn').value = day.busReturn   || '';
-    document.getElementById('de-notes').value     = day.scoringNote || '';
+    document.getElementById('de-buspickup').value    = day.busPickup    || '';
+    document.getElementById('de-busreturn').value    = day.busReturn    || '';
+    document.getElementById('de-restaurant').value   = day.restaurant   || '';
+    document.getElementById('de-bookingtime').value  = day.bookingTime  || '';
+    document.getElementById('de-notes').value        = day.scoringNote  || '';
     populateCourseSelect(day.courseId);
     renderGroupingsEditor(day.groupings || []);
     document.getElementById('day-editor').classList.remove('hidden');
@@ -308,10 +325,12 @@ const SchedulePage = (() => {
     const label       = document.getElementById('de-label').value.trim();
     const format      = document.getElementById('de-format').value;
     const teeTime     = document.getElementById('de-teetime').value;
-    const busPickup   = document.getElementById('de-buspickup').value || null;
-    const busReturn   = document.getElementById('de-busreturn').value || null;
+    const busPickup   = document.getElementById('de-buspickup').value   || null;
+    const busReturn   = document.getElementById('de-busreturn').value   || null;
+    const restaurant  = document.getElementById('de-restaurant').value.trim()  || null;
+    const bookingTime = document.getElementById('de-bookingtime').value || null;
     const scoringNote = document.getElementById('de-notes').value.trim();
-    const courseId    = document.getElementById('de-course').value || null;
+    const courseId    = document.getElementById('de-course').value      || null;
 
     const rows = document.querySelectorAll('#groupings-editor .grouping-row');
     const groupings = [];
@@ -324,7 +343,7 @@ const SchedulePage = (() => {
       }
     });
 
-    await DB.update(`schedule/${_editDay}`, { label, format, teeTime, busPickup, busReturn, scoringNote, courseId, groupings });
+    await DB.update(`schedule/${_editDay}`, { label, format, teeTime, busPickup, busReturn, restaurant, bookingTime, scoringNote, courseId, groupings });
     const savedDay = await DB.get(`schedule/${_editDay}`);
     if (savedDay?.format !== format) {
       App.toast('Schedule format could not be verified');

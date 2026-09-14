@@ -436,6 +436,20 @@ const ScorecardPage = (() => {
         ${Array.from({length: 18}, (_, i) => `<td class="sc-hole-th sc-pair-cell${i === 8 ? ' sc-nine-end' : ''}" id="mp-${i + 1}"></td>`).join('')}
         <td class="sc-sub-th"></td><td class="sc-sub-th"></td><td class="sc-sub-th"></td><td class="sc-sub-th"></td>
       </tr>`;
+
+      // ── Per-player matchplay detail rows ─────────────────────
+      playerIds.forEach((pid, rowIdx) => {
+        const pairLabel = rowIdx < 2 ? 'A' : 'B';
+        html += `<tr class="sc-mp-detail-row sc-mp-pair-${pairLabel}" id="mpd-row-${pid}">
+          <td class="sc-name-th sc-mp-detail-label" id="mpd-name-${pid}"></td>
+          ${Array.from({length: 9}, (_, i) => `<td class="sc-hole-th sc-mp-detail-cell${i === 8 ? ' sc-nine-end' : ''}" id="mpd-${pid}-${i + 1}"></td>`).join('')}
+          <td class="sc-sub-th sc-mp-detail-sub" id="mpd-out-${pid}"></td>
+          ${Array.from({length: 9}, (_, i) => `<td class="sc-hole-th sc-mp-detail-cell" id="mpd-${pid}-${i + 10}"></td>`).join('')}
+          <td class="sc-sub-th sc-mp-detail-sub" id="mpd-in-${pid}"></td>
+          <td class="sc-sub-th sc-mp-detail-sub" id="mpd-tot-${pid}"></td>
+          <td class="sc-sub-th sc-mp-detail-sub"></td>
+        </tr>`;
+      });
     }
 
     // ── Group contribution row (team formats only) ──
@@ -496,12 +510,12 @@ const ScorecardPage = (() => {
     const row = document.getElementById('matchplay-row');
     if (!row || playerIds.length < 4) return;
     const pairA = playerIds.slice(0, 2), pairB = playerIds.slice(2, 4);
+    const matchShots = matchShotAllocations(playerIds);
     let running = 0;
     for (let h = 1; h <= 18; h++) {
       const best = pair => Math.min(...pair.map(pid => {
         const gross = parseInt(document.getElementById(`si-${pid}-${h}`)?.value, 10) || 0;
-        const matchShots = matchShotAllocations(playerIds)[pid];
-        return gross ? gross - Scoring.shotsOnHole(matchShots, _sis[h - 1]) : 999;
+        return gross ? gross - Scoring.shotsOnHole(matchShots[pid], _sis[h - 1]) : 999;
       }));
       const a = best(pairA), b = best(pairB);
       const cell = document.getElementById(`mp-${h}`);
@@ -517,6 +531,75 @@ const ScorecardPage = (() => {
       cell.style.setProperty('color', color, 'important');
       cell.style.setProperty('background', background, 'important');
     }
+    recalcMatchplayDetailRows(playerIds);
+  }
+
+  function recalcMatchplayDetailRows(playerIds) {
+    if (playerIds.length < 4) return;
+    const matchShots = matchShotAllocations(playerIds);
+    const pairA = playerIds.slice(0, 2), pairB = playerIds.slice(2, 4);
+
+    // Net score using match shot allocation — same system as pts display and summary row
+    const netScore = (pid, h) => {
+      const gross = parseInt(document.getElementById(`si-${pid}-${h}`)?.value, 10) || 0;
+      if (!gross) return 999;
+      return gross - Scoring.shotsOnHole(matchShots[pid], _sis[h - 1]);
+    };
+
+    // Determine pair winner per hole: 'A', 'B', or null (halved / no scores)
+    const holeWinner = h => {
+      const bestA = Math.min(...pairA.map(p => netScore(p, h)));
+      const bestB = Math.min(...pairB.map(p => netScore(p, h)));
+      if (bestA === 999 && bestB === 999) return null;
+      if (bestA < bestB) return 'A';
+      if (bestB < bestA) return 'B';
+      return null; // halved
+    };
+
+    playerIds.forEach(pid => {
+      const mShots   = matchShots[pid];
+      const teamColor = playerTeamColor(pid);
+      const inPairA  = pairA.includes(pid);
+      const pairKey  = inPairA ? 'A' : 'B';
+
+      const nameCell = document.getElementById(`mpd-name-${pid}`);
+      if (nameCell) {
+        nameCell.innerHTML = `<span style="font-weight:700">${esc(_players[pid]?.name || pid)}</span><br><span style="font-size:0.65rem;opacity:0.85">${mShots} match shot${mShots !== 1 ? 's' : ''}</span>`;
+      }
+
+      let outPts = 0, inPts = 0;
+      for (let h = 1; h <= 18; h++) {
+        const gross = parseInt(document.getElementById(`si-${pid}-${h}`)?.value, 10) || 0;
+        const cell  = document.getElementById(`mpd-${pid}-${h}`);
+        if (!cell) continue;
+
+        if (!gross) { cell.textContent = ''; cell.style.removeProperty('background'); cell.style.removeProperty('color'); continue; }
+
+        const shots = Scoring.shotsOnHole(mShots, _sis[h - 1]);
+        const pts   = Scoring.stablefordPoints(gross, _pars[h - 1], shots);
+        cell.textContent = pts;
+        if (h <= 9) outPts += pts; else inPts += pts;
+
+        // Highlight cell if: this player's pair wins the hole AND this player's
+        // net score equals their pair's best (i.e. they are the contributing score)
+        const winner = holeWinner(h);
+        const pairBest = Math.min(...(inPairA ? pairA : pairB).map(p => netScore(p, h)));
+        const isContributor = winner === pairKey && netScore(pid, h) === pairBest;
+
+        if (isContributor) {
+          cell.style.setProperty('background', teamColor, 'important');
+          cell.style.setProperty('color', '#fff', 'important');
+        } else {
+          cell.style.removeProperty('background');
+          cell.style.removeProperty('color');
+        }
+      }
+
+      const setCell = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val || ''; };
+      setCell(`mpd-out-${pid}`, outPts || '');
+      setCell(`mpd-in-${pid}`,  inPts  || '');
+      setCell(`mpd-tot-${pid}`, (outPts + inPts) || '');
+    });
   }
 
   function renderMatchplayPanel(playerIds) {
