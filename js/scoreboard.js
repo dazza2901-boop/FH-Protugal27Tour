@@ -2135,17 +2135,22 @@ const ScoreboardPage = (() => {
     const el = document.getElementById('sb-comments');
     if (!el) return;
 
-    // Sanitise stored HTML — only allow <strong>, <em>, <br>, <p> through
+    // Sanitise stored HTML — allow <strong>, <em>, <br>, <p>, <div> through.
+    // <div> must be kept because contenteditable uses it for line breaks.
     function sanitise(html) {
-      const allowed = /^(strong|em|br|p)$/i;
-      const div = document.createElement('div');
-      div.innerHTML = html;
-      div.querySelectorAll('*').forEach(node => {
+      const allowed = /^(strong|em|br|p|div)$/i;
+      const wrap = document.createElement('div');
+      wrap.innerHTML = html;
+      wrap.querySelectorAll('*').forEach(node => {
         if (!allowed.test(node.tagName)) {
           node.replaceWith(...node.childNodes);
         }
+        // Strip any inline styles or attributes that sneak in
+        else {
+          [...node.attributes].forEach(a => node.removeAttribute(a.name));
+        }
       });
-      return div.innerHTML;
+      return wrap.innerHTML;
     }
 
     const safe = sanitise(_comments || '');
@@ -2196,11 +2201,15 @@ const ScoreboardPage = (() => {
     const editor = document.getElementById('comments-editor');
     if (!editor) return;
 
-    // Sanitise before saving — strip anything that isn't <strong>/<em>/<br>/<p>
-    const allowed = /^(strong|em|br|p)$/i;
+    // Sanitise before saving — keep <strong>/<em>/<br>/<p>/<div> (div = line breaks)
+    const allowed = /^(strong|em|br|p|div)$/i;
     const clone = editor.cloneNode(true);
     clone.querySelectorAll('*').forEach(node => {
-      if (!allowed.test(node.tagName)) node.replaceWith(...node.childNodes);
+      if (!allowed.test(node.tagName)) {
+        node.replaceWith(...node.childNodes);
+      } else {
+        [...node.attributes].forEach(a => node.removeAttribute(a.name));
+      }
     });
     const html = clone.innerHTML.trim();
 
