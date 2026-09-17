@@ -17,12 +17,41 @@ const ToursPage = (() => {
   function renderList() {
     const el = document.getElementById('tour-list');
     if (!el) return;
-    el.innerHTML = Object.entries(_tours).map(([id, tour]) =>
-      `<button class="tour-card ${id === DB.activeTour() ? 'selected' : ''}" onclick="ToursPage.select('${id}')">
-        <strong>${tour.name}</strong><span>${tour.playerCount || 12} players</span>
-        <span>${tour.teamBased ? `${tour.teamCount || 3} teams` : 'Individual tour'}</span>
-      </button>`
-    ).join('') || '<p class="center-msg">No tours configured.</p>';
+    const entries = Object.entries(_tours);
+    if (!entries.length) { el.innerHTML = '<p class="center-msg">No tours configured.</p>'; return; }
+
+    // Group tours by year extracted from their name (e.g. "Marbella 2026" → 2026).
+    // Tours with no recognisable year fall into an "Other" bucket.
+    const groups = {};
+    entries.forEach(([id, tour]) => {
+      const match = (tour.name || '').match(/\b(20\d{2})\b/);
+      const year  = match ? match[1] : 'Other';
+      if (!groups[year]) groups[year] = [];
+      groups[year].push([id, tour]);
+    });
+
+    // Sort year keys numerically (ascending), with "Other" at the end
+    const sortedYears = Object.keys(groups).sort((a, b) => {
+      if (a === 'Other') return 1;
+      if (b === 'Other') return -1;
+      return Number(a) - Number(b);
+    });
+
+    el.innerHTML = sortedYears.map(year => {
+      const cards = groups[year].map(([id, tour]) => {
+        const isActive   = id === DB.activeTour();
+        const isComplete = !!tour.tourComplete;
+        return `<button class="tour-card${isActive ? ' selected' : ''}${isComplete ? ' completed' : ''}" onclick="ToursPage.select('${id}')">
+          <strong>${tour.name}</strong>
+          <span>${tour.playerCount || 12} players · ${tour.teamBased ? `${tour.teamCount || 3} teams` : 'Individual'}</span>
+          ${isComplete ? '<span class="tour-complete-badge">✓ Tour Complete</span>' : ''}
+        </button>`;
+      }).join('');
+      return `<div class="tour-year-group">
+        <div class="tour-year-heading">${year}</div>
+        <div class="tour-year-cards">${cards}</div>
+      </div>`;
+    }).join('');
   }
 
   async function renderAdmin(container) {
@@ -33,6 +62,7 @@ const ToursPage = (() => {
         <div class="form-row mt-8"><div class="form-group"><label>Tour name</label><input id="tour-name" /></div><div class="form-group"><label>Players</label><input id="tour-players" type="number" min="1" /></div><div class="form-group"><label>Rounds</label><input id="tour-rounds" type="number" min="1" max="30" /></div></div>
         <div class="form-group"><label><input type="checkbox" id="tour-team-based" /> Team based tour</label></div>
         <div class="form-group"><label><input type="checkbox" id="tour-ryder-cup" /> Ryder Cup style tour</label><div class="text-muted" style="font-size:0.78rem;margin-top:4px">Only matchplay points and nearest-the-pin points count toward the team leaderboard.</div></div>
+        <div class="form-group"><label><input type="checkbox" id="tour-complete" /> Tour complete</label><div class="text-muted" style="font-size:0.78rem;margin-top:4px">Locks the tour — players cannot change scores and the leaderboard shows a "Tour Complete" banner.</div></div>
         <div class="form-group" id="tour-team-count-wrap"><label>Number of teams</label><input id="tour-team-count" type="number" min="2" max="12" value="3" /></div>
         <div class="form-group"><label>Tabs shown to users</label><div class="check-grid">
           <label><input type="checkbox" data-tab-option="tour" /> Tour Results</label><label><input type="checkbox" data-tab-option="dailyfocus" /> Daily Results</label><label><input type="checkbox" data-tab-option="individual" /> Individual</label><label><input type="checkbox" data-tab-option="bingo" /> Birdie Bingo</label><label><input type="checkbox" data-tab-option="ntp" /> Nearest Pin</label><label><input type="checkbox" data-tab-option="matchplay" /> Matchplay</label><label><input type="checkbox" data-tab-option="lostballs" /> Lost Balls</label>
@@ -53,6 +83,7 @@ const ToursPage = (() => {
     document.getElementById('tour-rounds').value = tour.rounds || tour.days || 5;
     document.getElementById('tour-team-based').checked = !!tour.teamBased;
     document.getElementById('tour-ryder-cup').checked = !!tour.ryderCup;
+    document.getElementById('tour-complete').checked = !!tour.tourComplete;
     document.getElementById('tour-team-count').value = tour.teamCount || 3;
     const tabs = tour.tabs || { tour:true, dailyfocus:true, individual:true, bingo:true, ntp:true, matchplay:true, lostballs:true };
     document.querySelectorAll('[data-tab-option]').forEach(el => { el.checked = tabs[el.dataset.tabOption] !== false; });
@@ -77,6 +108,7 @@ const ToursPage = (() => {
     document.querySelectorAll('[data-tab-option]').forEach(el => { tabs[el.dataset.tabOption] = el.checked; });
     const teamBased = document.getElementById('tour-team-based').checked;
     const ryderCup = document.getElementById('tour-ryder-cup').checked;
+    const tourComplete = document.getElementById('tour-complete').checked;
     const tourId = DB.activeTour();
     if (!tourId) { App.toast('Select a tour first'); return; }
     const rounds = Math.max(1, Math.min(30, parseInt(document.getElementById('tour-rounds').value, 10) || 1));
@@ -87,6 +119,7 @@ const ToursPage = (() => {
       teamBased,
       teamCount: teamBased ? parseInt(document.getElementById('tour-team-count').value, 10) || 2 : 0,
       ryderCup,
+      tourComplete,
       tabs,
       scoringOptions: { bingo: tabs.bingo, ntp: tabs.ntp, matchplay: tabs.matchplay, ryderCup }
     };

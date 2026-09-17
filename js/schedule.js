@@ -17,12 +17,13 @@ const SchedulePage = (() => {
   let _editCourse = null;   // key of course being edited, or 'new'
 
   const FORMAT_LABELS = {
-    singles: 'Singles Stableford',
-    pairs:   'Pairs Stableford',
-    betterball: 'Betterball Pairs Matchplay',
-    team:    'Team Day [ Best 2 (3/4s), Best 3 (5s) ]'
+    singles:      'Singles Stableford',
+    'singles-team': 'Singles + Group Team Score',
+    pairs:        'Pairs Stableford',
+    betterball:   'Betterball Pairs Matchplay',
+    team:         'Team Day [ Best 2 (3/4s), Best 3 (5s) ]'
   };
-  const FORMAT_CLASS = { singles: 'format-singles', pairs: 'format-pairs', betterball: 'format-matchplay', team: 'format-team' };
+  const FORMAT_CLASS = { singles: 'format-singles', 'singles-team': 'format-singles', pairs: 'format-pairs', betterball: 'format-matchplay', team: 'format-team' };
 
   // ── Render ──────────────────────────────────────────────
   function render(container, isAdmin) {
@@ -50,6 +51,7 @@ const SchedulePage = (() => {
             <label>Format</label>
             <select id="de-format">
               <option value="singles">Singles Stableford</option>
+              <option value="singles-team">Singles + Group Team Score</option>
               <option value="pairs">Pairs Stableford</option>
               <option value="betterball">Betterball Pairs Matchplay</option>
               <option value="team">Team Day [ Best 2 (3/4s), Best 3 (5s) ]</option>

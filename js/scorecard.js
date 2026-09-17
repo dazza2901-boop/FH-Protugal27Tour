@@ -27,8 +27,9 @@ const ScorecardPage = (() => {
   // Stored in Firebase at dayHandicaps/dayN/pid
   let _dayHcp = {};
 
-  let _activeView  = 'table'; // 'table' or 'single'
-  let _currentHole = 1;       // 1 to 18
+  let _activeView   = 'table'; // 'table' or 'single'
+  let _currentHole  = 1;       // 1 to 18
+  let _tourComplete = false;   // true when the active tour is locked
 
   // ── Effective handicap for a player on the current day ───
   // Returns the explicitly allocated shots for today, or 0 if none set.
@@ -59,9 +60,18 @@ const ScorecardPage = (() => {
 
   // ── Render shell ─────────────────────────────────────────
   function render(container) {
+    // Fetch tour-complete flag before building the page
+    DB.getTours().then(tours => {
+      _tourComplete = !!(tours[DB.activeTour()] || {}).tourComplete;
+      _applyTourCompleteLock();
+    });
+
     container.innerHTML = `<div class="page">
       <div class="flex-between mt-8">
         <span class="section-title">📝 Score Entry</span>
+      </div>
+      <div id="sc-locked-banner" class="hidden" style="margin-bottom:12px;padding:12px 16px;background:#e8f5e9;border:1.5px solid #a8d5b5;border-radius:10px;text-align:center;font-weight:700;color:#1a5c2a;font-size:0.92rem">
+        🏁 This tour is complete — scores are locked.
       </div>
 
       <div class="card">
@@ -171,7 +181,10 @@ const ScorecardPage = (() => {
       _teams = await DB.get('teams') || {};
       _dayFormat = day?.format || 'singles';
       const showMatchplayShots = _dayFormat === 'betterball';
-      document.getElementById('shot-alloc-card')?.classList.toggle('hidden', !showMatchplayShots && !_tourTeamBased);
+      // Show shot allocation for betterball (matchplay shots), any team-based tour,
+      // and singles-team (individual handicaps drive the best-ball group score).
+      const showShotAlloc = showMatchplayShots || _tourTeamBased || _dayFormat === 'singles-team';
+      document.getElementById('shot-alloc-card')?.classList.toggle('hidden', !showShotAlloc);
       const courseId = day?.courseId;
       if (courseId) {
         const course = await DB.get(`courses/${courseId}`);
@@ -183,7 +196,7 @@ const ScorecardPage = (() => {
         _sis  = Scoring.defaultSIs();
         _courseName = '';
       }
-      const fmtLabel = { singles:'Singles Stableford', pairs:'Pairs Stableford', betterball:'Betterball Pairs Matchplay', team:'Team Day [ Best 2 (3/4s), Best 3 (5s) ]' };
+      const fmtLabel = { singles:'Singles Stableford', 'singles-team':'Singles + Group Team Score', pairs:'Pairs Stableford', betterball:'Betterball Pairs Matchplay', team:'Team Day [ Best 2 (3/4s), Best 3 (5s) ]' };
       const info = document.getElementById('sc-day-info');
       if (info) info.textContent = day
         ? `${day.label || `Day ${dayNum}`} · ${fmtLabel[day.format] || day.format} · Tee: ${day.teeTime || '—'}${_courseName ? ` · ${_courseName}` : ''}`
@@ -260,7 +273,7 @@ const ScorecardPage = (() => {
     const groupTitle = document.getElementById('sc-group-title');
     if (groupTitle) groupTitle.textContent = playerIds.map(pid => _players[pid]?.name || pid).join(' · ');
 
-    const fmtLabel = { singles:'Singles', pairs:'Pairs', betterball:'Betterball Pairs Matchplay', team:'Team Day [ Best 2 (3/4s), Best 3 (5s) ]' };
+    const fmtLabel = { singles:'Singles', 'singles-team':'Singles + Group Team Score', pairs:'Pairs', betterball:'Betterball Pairs Matchplay', team:'Team Day [ Best 2 (3/4s), Best 3 (5s) ]' };
     const tag = document.getElementById('sc-format-tag');
     if (tag) {
       tag.textContent = fmtLabel[_dayFormat] || _dayFormat;
@@ -453,10 +466,11 @@ const ScorecardPage = (() => {
     }
 
     // ── Group contribution row (team formats only) ──
-    if (_tourTeamBased && _dayFormat !== 'pairs' && _dayFormat !== 'betterball') {
+    if ((_tourTeamBased || _dayFormat === 'singles-team') && _dayFormat !== 'pairs' && _dayFormat !== 'betterball') {
       const contribLabel = {
-        singles: `Best 1 (Singles)`,
-        team:    `Best 2 (P3/4) · Best 3 (P5)`
+        singles:        `Best 1 (Singles)`,
+        'singles-team': `Group: Best 2 (P3/4) · Best 3 (P5)`,
+        team:           `Best 2 (P3/4) · Best 3 (P5)`
       }[_dayFormat] || 'Group';
 
       html += `<tr class="sc-contrib-row">
@@ -822,7 +836,8 @@ const ScorecardPage = (() => {
       let contrib = 0;
       if (_dayFormat === 'betterball') {
         contrib = Math.max(...pts, 0);
-      } else if (_dayFormat === 'team') {
+      } else if (_dayFormat === 'team' || _dayFormat === 'singles-team') {
+        // Best 2 on par 3/4s, best 3 on par 5s — applied per group of players in the scorecard
         const sorted = [...pts].sort((a, b) => b - a);
         const count  = _pars[i] === 5 ? 3 : 2;
         for (let k = 0; k < count; k++) contrib += sorted[k] || 0;
@@ -848,7 +863,20 @@ const ScorecardPage = (() => {
   }
 
   // ── Save scores ──────────────────────────────────────────
+  function _applyTourCompleteLock() {
+    const locked = _tourComplete && !App.isAdmin();
+    const banner  = document.getElementById('sc-locked-banner');
+    const saveBtn = document.getElementById('sc-save-btn');
+    const resetBtn = document.getElementById('sc-reset-btn');
+    const saSaveBtn = document.getElementById('sa-save-btn');
+    if (banner)   banner.classList.toggle('hidden', !locked);
+    if (saveBtn)  { saveBtn.disabled = locked; saveBtn.style.opacity = locked ? '0.45' : ''; }
+    if (resetBtn) { resetBtn.disabled = locked; resetBtn.style.opacity = locked ? '0.45' : ''; }
+    if (saSaveBtn) { saSaveBtn.disabled = locked; saSaveBtn.style.opacity = locked ? '0.45' : ''; }
+  }
+
   async function saveAllScores(silent = false) {
+    if (_tourComplete && !App.isAdmin()) { if (!silent) App.toast('This tour is complete — scores are locked'); return; }
     const playerIds = _currentGroup?.playerIds || [];
     if (playerIds.length === 0) { if (!silent) App.toast('No players in this group'); return; }
 
@@ -898,6 +926,7 @@ const ScorecardPage = (() => {
   }
 
   async function resetAllScores() {
+    if (_tourComplete && !App.isAdmin()) { App.toast('This tour is complete — scores are locked'); return; }
     const playerIds = _currentGroup?.playerIds || [];
     if (playerIds.length === 0) { App.toast('No players in this group'); return; }
 

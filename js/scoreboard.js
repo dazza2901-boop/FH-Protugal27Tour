@@ -19,9 +19,10 @@ const ScoreboardPage = (() => {
   let _ntpUnsub  = null;
   let _isAdmin   = false;
   let _tourSettings = {};
+  let _comments  = '';   // rich-text comment block stored in Firebase
 
   let DAYS = 5;
-  const FORMAT_SHORT = { singles:'Singles', pairs:'Pairs', betterball:'Betterball Matchplay', team:'Team' };
+  const FORMAT_SHORT = { singles:'Singles', 'singles-team':'Singles + Team', pairs:'Pairs', betterball:'Betterball Matchplay', team:'Team' };
 
   // ── Render shell ─────────────────────────────────────────
   function render(container, isAdmin) {
@@ -30,7 +31,10 @@ const ScoreboardPage = (() => {
     container.innerHTML = `<div class="page">
       <div class="flex-between mt-8">
         <span class="section-title">🏆 Leaderboard</span>
-        <span class="tag" style="background:#d4edda;color:#155724">● Live</span>
+        <span id="sb-live-tag" class="tag" style="background:#d4edda;color:#155724">● Live</span>
+      </div>
+      <div id="sb-complete-banner" class="hidden" style="margin:10px 0 4px;padding:12px 16px;background:#e8f5e9;border:1.5px solid #a8d5b5;border-radius:10px;text-align:center;font-weight:700;color:#1a5c2a;font-size:0.95rem">
+        🏁 Tour Complete
       </div>
 
       <div class="tabs">
@@ -41,6 +45,7 @@ const ScoreboardPage = (() => {
         <button class="tab-btn" data-tab="ntp"                onclick="ScoreboardPage.switchTab('ntp')">📍 Nearest Pin</button>
         <button class="tab-btn" data-tab="matchplay"          onclick="ScoreboardPage.switchTab('matchplay')">⚔️ Matchplay</button>
         <button class="tab-btn" data-tab="lostballs"          onclick="ScoreboardPage.switchTab('lostballs')">🔴 Lost Balls</button>
+        <button class="tab-btn" data-tab="comments"           onclick="ScoreboardPage.switchTab('comments')">💬 Comments</button>
       </div>
 
       <div id="sb-tour"        class="tab-content"></div>
@@ -50,6 +55,7 @@ const ScoreboardPage = (() => {
       <div id="sb-ntp"         class="tab-content hidden"></div>
       <div id="sb-matchplay"   class="tab-content hidden"></div>
       <div id="sb-lostballs"   class="tab-content hidden"></div>
+      <div id="sb-comments"    class="tab-content hidden"></div>
     </div>`;
 
     _unsubs.forEach(u => u());
@@ -61,8 +67,19 @@ const ScoreboardPage = (() => {
     _unsubs.push(DB.on('courses',  d => { _courses  = d || {}; refreshAll(); }));
     _unsubs.push(DB.on('config',   d => { _config   = d || {}; refreshAll(); }));
     _unsubs.push(DB.on('ntp',      d => { _ntp      = d || {}; refreshAll();  }));
+    _unsubs.push(DB.on('comments', d => { _comments = d || ''; renderComments(); }));
     DB.getTours().then(tours => {
       _tourSettings = tours[DB.activeTour()] || {};
+      // Show/hide the "Tour Complete" banner and swap the Live tag
+      const banner  = document.getElementById('sb-complete-banner');
+      const liveTag = document.getElementById('sb-live-tag');
+      const done    = !!_tourSettings.tourComplete;
+      banner?.classList.toggle('hidden', !done);
+      if (liveTag) {
+        liveTag.style.background = done ? '#e8f5e9' : '#d4edda';
+        liveTag.style.color      = done ? '#1a5c2a' : '#155724';
+        liveTag.textContent      = done ? '✓ Complete' : '● Live';
+      }
       refreshAll();
     });
 
@@ -88,6 +105,7 @@ const ScoreboardPage = (() => {
     renderMatchplay();
     renderDailyFocus();
     renderLostBalls();
+    renderComments();
   }
 
   // ── Helpers ──────────────────────────────────────────────
@@ -175,7 +193,7 @@ const ScoreboardPage = (() => {
           pts += Math.max(pa, pb);
         }
       });
-    } else if (format === 'singles') {
+    } else if (format === 'singles' || format === 'singles-team') {
       // Individual stableford values were saved with the correct day handicap — use them directly
       memberIds.forEach(pid => { pts += dayScores[pid]?.stableford || 0; });
 
@@ -291,15 +309,16 @@ const ScoreboardPage = (() => {
         });
       }
 
-    } else if (format === 'singles') {
-      // Rank all players individually with countback; award tour pts then credit their team
+    } else if (format === 'singles' || format === 'singles-team') {
+      // Rank all players individually with countback; award tour pts then credit their team.
+      // singles-team also tracks individual stableford the same way — the group team score
+      // is a display-only concept on the scorecard and daily focus, not a tour points mechanic.
       const { pars, sis } = dayParsAndSIs(dayKey);
       const ranked = Object.entries(_players)
         .map(([pid]) => {
           const sc = dayScores[pid] || {};
           const total = sc.stableford || 0;
           const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
-          // Use day-specific handicap for countback hole points (same as scorecard uses)
           const holePts = Scoring.holePoints(scores, pars, sis, effectiveHcp(pid, dayKey));
           return { pid, total, holePts };
         })
@@ -1621,7 +1640,7 @@ const ScoreboardPage = (() => {
 
       if (standings.length > 0) {
         const lbRows = standings.map((t, idx) => {
-          const tourPts = TOUR_PTS_TEAM[idx] || 0;
+          const tourPts = _tourSettings.teamBased ? (TOUR_PTS_TEAM[idx] || 0) : 0;
           const prevTied = idx > 0 && standings[idx-1].total === t.total && Scoring.countbackCompare(standings[idx-1].holePts||[], t.holePts||[]) === 0;
           const nextTied = idx < standings.length-1 && standings[idx+1].total === t.total && Scoring.countbackCompare(t.holePts||[], standings[idx+1].holePts||[]) === 0;
           const isTied = prevTied || nextTied;
@@ -1633,7 +1652,7 @@ const ScoreboardPage = (() => {
             <span style="font-weight:700;font-size:1rem;flex:1">${t.team.name}${cbInfo}</span>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:72px">
               <span style="font-weight:900;font-size:1.6rem;color:#1a5c2a;line-height:1">${t.score}</span>
-              ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:12px;white-space:nowrap">+${tourPts} pts</span>` : '<span style="font-size:0.72rem;color:transparent">—</span>'}
+              ${tourPts > 0 ? `<span style="background:#d4edda;color:#155724;font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:12px;white-space:nowrap">+${tourPts} pts</span>` : ''}
             </div>
           </div>`;
         }).join('');
@@ -1675,7 +1694,7 @@ const ScoreboardPage = (() => {
 
       if (pairStandings.length > 0) {
         const lbRows = pairStandings.map((p, idx) => {
-          const tourPts = TOUR_PTS_PAIRS[idx] || 0;
+          const tourPts = _tourSettings.teamBased ? (TOUR_PTS_PAIRS[idx] || 0) : 0;
           const color = p.team?.color || '#ccc';
           // Tied detection: same total and countback still draws
           const prevTied = idx > 0 && pairStandings[idx-1].total === p.total && Scoring.countbackCompare(pairStandings[idx-1].holePts||[], p.holePts||[]) === 0;
@@ -1703,8 +1722,8 @@ const ScoreboardPage = (() => {
           </div>`;
       }
 
-    } else if (dayFmt === 'singles') {
-      // ── Singles day: rank players by individual stableford ──
+    } else if (dayFmt === 'singles' || dayFmt === 'singles-team') {
+      // ── Singles day (and Singles+Team): rank players by individual stableford ──
       const { pars: singPars, sis: singSis } = dayParsAndSIs(dayKey);
       const playerStandings = Object.entries(_players).map(([pid, p]) => {
         const sc = dayScores[pid] || {};
@@ -1717,7 +1736,7 @@ const ScoreboardPage = (() => {
 
       if (playerStandings.length > 0) {
         const lbRows = playerStandings.map((p, idx) => {
-          const tourPts = TOUR_PTS_SINGLES[idx] || 0;
+          const tourPts = _tourSettings.teamBased ? (TOUR_PTS_SINGLES[idx] || 0) : 0;
           return `<div style="display:flex;align-items:center;gap:12px;padding:10px 14px;${idx < playerStandings.length - 1 ? 'border-bottom:1px solid #e5e7eb;' : ''}">
             <span class="pos-badge pos-${idx < 3 ? idx+1 : 'n'}" style="flex-shrink:0">${idx+1}</span>
             ${p.teamColor ? `<span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${p.teamColor};flex-shrink:0"></span>` : ''}
@@ -1736,6 +1755,60 @@ const ScoreboardPage = (() => {
             </div>
             ${lbRows}
           </div>`;
+      }
+
+      // ── Singles-Team: also show group team scores ────────────
+      if (dayFmt === 'singles-team') {
+        const { pars: tPars, sis: tSis } = dayParsAndSIs(dayKey);
+        const groupings = (day.groupings || []);
+        const groupStandings = groupings.map((g, gi) => {
+          const memberIds = Array.isArray(g.playerIds) ? g.playerIds
+            : (Array.isArray(g.slots)
+                ? g.slots.map(slot => {
+                    const sorted = Object.entries(_players).sort((a,b) => (a[1].handicap??99)-(b[1].handicap??99));
+                    return sorted[slot-1]?.[0];
+                  }).filter(Boolean)
+                : []);
+          let score = 0;
+          const holePts = Array.from({length: 18}, (_, i) => {
+            const hole = i + 1;
+            const hPts = memberIds.map(pid => {
+              const gross = (dayScores[pid] || {})[`h${hole}`] || 0;
+              if (!gross) return 0;
+              return Scoring.stablefordPoints(gross, tPars[i], Scoring.shotsOnHole(effectiveHcp(pid, dayKey), tSis[i]));
+            }).sort((a, b) => b - a);
+            const count = tPars[i] === 5 ? 3 : 2;
+            let holeTotal = 0;
+            for (let k = 0; k < count; k++) holeTotal += hPts[k] || 0;
+            score += holeTotal;
+            return holeTotal;
+          });
+          const names = memberIds.map(pid => firstName(_players[pid]?.name)).filter(Boolean).join(', ');
+          return { label: `Group ${gi + 1}`, names, score, total: score, holePts };
+        }).filter(g => g.score > 0).sort((a, b) => Scoring.countbackSort(a, b));
+
+        if (groupStandings.length > 0) {
+          const glbRows = groupStandings.map((g, idx) => {
+            const prevTied = idx > 0 && groupStandings[idx-1].total === g.total && Scoring.countbackCompare(groupStandings[idx-1].holePts||[], g.holePts||[]) === 0;
+            const nextTied = idx < groupStandings.length-1 && groupStandings[idx+1].total === g.total && Scoring.countbackCompare(g.holePts||[], groupStandings[idx+1].holePts||[]) === 0;
+            const isTied  = prevTied || nextTied;
+            const posLabel = isTied ? `T${idx+1}` : medals[idx] || `${idx+1}`;
+            const cbInfo   = isTied ? `<span style="font-size:0.68rem;color:#57606a;display:block;margin-top:2px">${Scoring.countbackLabel(g.holePts||[])}</span>` : '';
+            return `<div style="display:flex;align-items:center;gap:12px;padding:12px 14px;${idx < groupStandings.length - 1 ? 'border-bottom:1px solid #e5e7eb;' : ''}">
+              <span style="font-size:${isTied ? '0.85rem' : '1.4rem'};width:28px;text-align:center;flex-shrink:0;font-weight:${isTied ? '700' : 'normal'}">${posLabel}</span>
+              <span style="font-weight:700;font-size:1rem;flex:1">${g.label}<br><span style="font-size:0.72rem;font-weight:400;color:#57606a">${g.names}</span>${cbInfo}</span>
+              <span style="font-weight:900;font-size:1.6rem;color:#1a5c2a;line-height:1">${g.score}</span>
+            </div>`;
+          }).join('');
+          teamLeaderboardHtml = `
+            <div class="card" style="margin-bottom:14px">
+              <div class="card-header" style="margin-bottom:4px">
+                <span class="card-title">👥 Group Team Leaderboard</span>
+                <span class="format-badge format-team">Best 2 (Par 3/4) · Best 3 (Par 5)</span>
+              </div>
+              ${glbRows}
+            </div>` + teamLeaderboardHtml;
+        }
       }
     }
 
@@ -2057,10 +2130,103 @@ const ScoreboardPage = (() => {
     document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('hidden', c.id !== `sb-${tab}`));
   }
 
+  // ── Tour Comments tab ─────────────────────────────────────
+  function renderComments() {
+    const el = document.getElementById('sb-comments');
+    if (!el) return;
+
+    // Sanitise stored HTML — only allow <strong>, <em>, <br>, <p> through
+    function sanitise(html) {
+      const allowed = /^(strong|em|br|p)$/i;
+      const div = document.createElement('div');
+      div.innerHTML = html;
+      div.querySelectorAll('*').forEach(node => {
+        if (!allowed.test(node.tagName)) {
+          node.replaceWith(...node.childNodes);
+        }
+      });
+      return div.innerHTML;
+    }
+
+    const safe = sanitise(_comments || '');
+
+    if (!_isAdmin) {
+      // Read-only view
+      el.innerHTML = safe
+        ? `<div class="card">
+             <div class="card-title" style="margin-bottom:12px">💬 Tour Comments</div>
+             <div class="comments-body">${safe}</div>
+           </div>`
+        : `<p class="center-msg" style="color:#aaa">No comments yet.</p>`;
+      return;
+    }
+
+    // Admin editor — only rebuild when the editor isn't already open (avoid clobbering mid-edit)
+    if (document.getElementById('comments-editor')) return;
+
+    el.innerHTML = `
+      <div class="card">
+        <div class="card-title" style="margin-bottom:12px">💬 Tour Comments</div>
+        <p class="text-muted" style="font-size:0.8rem;margin-bottom:10px">
+          Visible to all players. Use the toolbar to apply <strong>Bold</strong> or <em>Italic</em> to selected text.
+        </p>
+        <div class="comments-toolbar">
+          <button class="comments-fmt-btn" title="Bold" onclick="ScoreboardPage.applyCommentFormat('bold')"><strong>B</strong></button>
+          <button class="comments-fmt-btn" title="Italic" onclick="ScoreboardPage.applyCommentFormat('italic')"><em>I</em></button>
+        </div>
+        <div id="comments-editor"
+          contenteditable="true"
+          class="comments-editor"
+          spellcheck="true">${safe}</div>
+        <div style="display:flex;gap:10px;margin-top:12px">
+          <button class="btn-primary" style="flex:1" onclick="ScoreboardPage.saveComments()">💾 Save Comments</button>
+          <button class="btn-secondary" style="flex:1" onclick="ScoreboardPage.clearComments()">🗑️ Clear All</button>
+        </div>
+      </div>`;
+  }
+
+  function applyCommentFormat(command) {
+    // execCommand is deprecated but remains the simplest cross-browser
+    // way to apply formatting inside a contenteditable div.
+    document.getElementById('comments-editor')?.focus();
+    document.execCommand(command, false, null);
+  }
+
+  async function saveComments() {
+    const editor = document.getElementById('comments-editor');
+    if (!editor) return;
+
+    // Sanitise before saving — strip anything that isn't <strong>/<em>/<br>/<p>
+    const allowed = /^(strong|em|br|p)$/i;
+    const clone = editor.cloneNode(true);
+    clone.querySelectorAll('*').forEach(node => {
+      if (!allowed.test(node.tagName)) node.replaceWith(...node.childNodes);
+    });
+    const html = clone.innerHTML.trim();
+
+    const btn = document.querySelector('#sb-comments .btn-primary');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      await DB.set('comments', html);
+      App.toast('Comments saved ✓');
+    } catch (err) {
+      console.error('saveComments error:', err);
+      App.toast('Error saving comments');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '💾 Save Comments'; }
+    }
+  }
+
+  async function clearComments() {
+    if (!confirm('Clear all comments?')) return;
+    await DB.set('comments', '');
+    App.toast('Comments cleared');
+  }
+
   function destroy() {
     _unsubs.forEach(u => u());
     _unsubs = [];
   }
 
-  return { render, destroy, switchTab, saveNTPDay, saveNTP, setDailyFocusDay, showPlayerDetail, closePlayerDetail };
+  return { render, destroy, switchTab, saveNTPDay, saveNTP, setDailyFocusDay, showPlayerDetail, closePlayerDetail, applyCommentFormat, saveComments, clearComments };
 })();

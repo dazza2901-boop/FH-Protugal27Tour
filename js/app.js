@@ -208,16 +208,20 @@ const App = (() => {
       btn.classList.toggle('hidden', !visible);
     });
     const tabs = tour.tabs || {};
-    const tabMap = { tour:'tour', dailyfocus:'dailyfocus', individual:'individual', bingo:'bingo', ntp:'ntp', matchplay:'matchplay', lostballs:'lostballs' };
+    // 'tour' is team-only (shows team standings); hide it on individual tours unless explicitly enabled.
+    // All other tabs are valid for both tour types — only hide them if the admin explicitly disabled them.
+    const teamOnlyTabs = new Set(['tour']);
+    const tabMap = { tour:'tour', dailyfocus:'dailyfocus', individual:'individual', bingo:'bingo', ntp:'ntp', matchplay:'matchplay', lostballs:'lostballs', comments:'comments' };
     Object.entries(tabMap).forEach(([key, value]) => {
       const tab = document.querySelector(`.tab-btn[data-tab="${value}"]`);
-      if (tab) tab.classList.toggle('hidden', tabs[key] === false || (!tour.teamBased && key !== 'individual'));
+      if (!tab) return;
+      const disabledByAdmin = tabs[key] === false;
+      const teamOnlyHidden  = teamOnlyTabs.has(key) && !tour.teamBased;
+      tab.classList.toggle('hidden', disabledByAdmin || teamOnlyHidden);
     });
     document.querySelector('.nav-btn[data-page="teams"]')?.classList.toggle('hidden', !tour.teamBased);
     if (_currentPage === 'scoreboard') {
-      const firstTab = !tour.teamBased
-        ? document.querySelector('.tab-btn[data-tab="individual"]:not(.hidden)')
-        : document.querySelector('.tab-btn:not(.hidden)');
+      const firstTab = document.querySelector('.tab-btn:not(.hidden)');
       firstTab?.click();
     }
   }
