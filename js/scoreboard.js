@@ -2135,8 +2135,21 @@ const ScoreboardPage = (() => {
   // Inline markers: **text** = bold, _text_ = italic.
   // Displayed by converting markers → <strong>/<em> and \n → <br>.
 
-  function _commentsToHtml(text) {
-    // Escape HTML entities first so stored text can't inject markup
+  function _commentsToPlain(raw) {
+    // If legacy HTML, extract plain text preserving line structure.
+    if (!/<[a-z]/i.test(raw)) return raw;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = raw
+      .replace(/<\/(div|p)>/gi, '\n')
+      .replace(/<br\s*\/?>/gi, '\n');
+    return (tmp.textContent || tmp.innerText || '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  function _commentsToHtml(raw) {
+    const text = _commentsToPlain(raw);
+    // Escape HTML entities so stored text can't inject markup
     const esc = text
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
@@ -2177,7 +2190,7 @@ const ScoreboardPage = (() => {
           <button class="comments-fmt-btn" title="Wrap selection in **bold**" onclick="ScoreboardPage.applyCommentFormat('bold')"><strong>B</strong></button>
           <button class="comments-fmt-btn" title="Wrap selection in _italic_" onclick="ScoreboardPage.applyCommentFormat('italic')"><em>I</em></button>
         </div>
-        <textarea id="comments-editor" class="comments-editor" rows="10" spellcheck="true">${text.replace(/</g,'&lt;')}</textarea>
+        <textarea id="comments-editor" class="comments-editor" rows="10" spellcheck="true">${_commentsToPlain(_comments || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
         <div style="display:flex;gap:10px;margin-top:12px">
           <button class="btn-primary" style="flex:1" onclick="ScoreboardPage.saveComments()">💾 Save Comments</button>
           <button class="btn-secondary" style="flex:1" onclick="ScoreboardPage.clearComments()">🗑️ Clear All</button>
