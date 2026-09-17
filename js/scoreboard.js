@@ -2131,58 +2131,53 @@ const ScoreboardPage = (() => {
   }
 
   // ── Tour Comments tab ─────────────────────────────────────
+  // Storage format: plain text with \n line breaks.
+  // Inline markers: **text** = bold, _text_ = italic.
+  // Displayed by converting markers → <strong>/<em> and \n → <br>.
+
+  function _commentsToHtml(text) {
+    // Escape HTML entities first so stored text can't inject markup
+    const esc = text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    return esc
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')  // **bold**
+      .replace(/_(.+?)_/g, '<em>$1</em>')                // _italic_
+      .replace(/\n/g, '<br>');                            // line breaks
+  }
+
   function renderComments() {
     const el = document.getElementById('sb-comments');
     if (!el) return;
 
-    // Sanitise stored HTML — allow <strong>, <em>, <br>, <p>, <div> through.
-    // <div> must be kept because contenteditable uses it for line breaks.
-    function sanitise(html) {
-      const allowed = /^(strong|em|br|p|div)$/i;
-      const wrap = document.createElement('div');
-      wrap.innerHTML = html;
-      wrap.querySelectorAll('*').forEach(node => {
-        if (!allowed.test(node.tagName)) {
-          node.replaceWith(...node.childNodes);
-        }
-        // Strip any inline styles or attributes that sneak in
-        else {
-          [...node.attributes].forEach(a => node.removeAttribute(a.name));
-        }
-      });
-      return wrap.innerHTML;
-    }
-
-    const safe = sanitise(_comments || '');
+    const text = _comments || '';
 
     if (!_isAdmin) {
-      // Read-only view
-      el.innerHTML = safe
+      el.innerHTML = text
         ? `<div class="card">
              <div class="card-title" style="margin-bottom:12px">💬 Tour Comments</div>
-             <div class="comments-body">${safe}</div>
+             <div class="comments-body">${_commentsToHtml(text)}</div>
            </div>`
         : `<p class="center-msg" style="color:#aaa">No comments yet.</p>`;
       return;
     }
 
-    // Admin editor — only rebuild when the editor isn't already open (avoid clobbering mid-edit)
+    // Admin editor — don't rebuild while the textarea is open (avoid losing edits on live sync)
     if (document.getElementById('comments-editor')) return;
 
     el.innerHTML = `
       <div class="card">
         <div class="card-title" style="margin-bottom:12px">💬 Tour Comments</div>
         <p class="text-muted" style="font-size:0.8rem;margin-bottom:10px">
-          Visible to all players. Use the toolbar to apply <strong>Bold</strong> or <em>Italic</em> to selected text.
+          Wrap text with <code>**word**</code> for <strong>bold</strong> or <code>_word_</code> for <em>italic</em>.
+          Line breaks are preserved as-is.
         </p>
         <div class="comments-toolbar">
-          <button class="comments-fmt-btn" title="Bold" onclick="ScoreboardPage.applyCommentFormat('bold')"><strong>B</strong></button>
-          <button class="comments-fmt-btn" title="Italic" onclick="ScoreboardPage.applyCommentFormat('italic')"><em>I</em></button>
+          <button class="comments-fmt-btn" title="Wrap selection in **bold**" onclick="ScoreboardPage.applyCommentFormat('bold')"><strong>B</strong></button>
+          <button class="comments-fmt-btn" title="Wrap selection in _italic_" onclick="ScoreboardPage.applyCommentFormat('italic')"><em>I</em></button>
         </div>
-        <div id="comments-editor"
-          contenteditable="true"
-          class="comments-editor"
-          spellcheck="true">${safe}</div>
+        <textarea id="comments-editor" class="comments-editor" rows="10" spellcheck="true">${text.replace(/</g,'&lt;')}</textarea>
         <div style="display:flex;gap:10px;margin-top:12px">
           <button class="btn-primary" style="flex:1" onclick="ScoreboardPage.saveComments()">💾 Save Comments</button>
           <button class="btn-secondary" style="flex:1" onclick="ScoreboardPage.clearComments()">🗑️ Clear All</button>
@@ -2190,33 +2185,26 @@ const ScoreboardPage = (() => {
       </div>`;
   }
 
-  function applyCommentFormat(command) {
-    // execCommand is deprecated but remains the simplest cross-browser
-    // way to apply formatting inside a contenteditable div.
-    document.getElementById('comments-editor')?.focus();
-    document.execCommand(command, false, null);
+  function applyCommentFormat(type) {
+    const ta = document.getElementById('comments-editor');
+    if (!ta) return;
+    const start  = ta.selectionStart;
+    const end    = ta.selectionEnd;
+    const sel    = ta.value.slice(start, end);
+    const marker = type === 'bold' ? '**' : '_';
+    const wrapped = marker + (sel || 'text') + marker;
+    ta.setRangeText(wrapped, start, end, 'select');
+    ta.focus();
   }
 
   async function saveComments() {
-    const editor = document.getElementById('comments-editor');
-    if (!editor) return;
-
-    // Sanitise before saving — keep <strong>/<em>/<br>/<p>/<div> (div = line breaks)
-    const allowed = /^(strong|em|br|p|div)$/i;
-    const clone = editor.cloneNode(true);
-    clone.querySelectorAll('*').forEach(node => {
-      if (!allowed.test(node.tagName)) {
-        node.replaceWith(...node.childNodes);
-      } else {
-        [...node.attributes].forEach(a => node.removeAttribute(a.name));
-      }
-    });
-    const html = clone.innerHTML.trim();
-
+    const ta = document.getElementById('comments-editor');
+    if (!ta) return;
+    const text = ta.value;
     const btn = document.querySelector('#sb-comments .btn-primary');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
     try {
-      await DB.set('comments', html);
+      await DB.set('comments', text);
       App.toast('Comments saved ✓');
     } catch (err) {
       console.error('saveComments error:', err);
