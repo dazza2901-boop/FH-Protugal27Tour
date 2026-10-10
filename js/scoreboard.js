@@ -1992,15 +1992,8 @@ const ScoreboardPage = (() => {
       const courseName = _courses[day.courseId]?.name || day.label || `Day ${d}`;
       const fmtLabel   = FORMAT_SHORT[day.format] || '';
 
-      const gross    = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
-      const sbPts    = gross.map((g, i) => g ? Scoring.stablefordPoints(g, pars[i], Scoring.shotsOnHole(hcp, sis[i])) : null);
-      const grossCls = gross.map((g, i) => g ? Scoring.classify(g, pars[i]) : '');
-      const sbCls    = sbPts.map(v => {
-        if (v === null) return '';
-        if (v >= 4) return 'eagle'; if (v === 3) return 'birdie';
-        if (v === 2) return 'par';  if (v === 1) return 'bogey';
-        return 'double';
-      });
+      const gross = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
+      const sbPts = gross.map((g, i) => g ? Scoring.stablefordPoints(g, pars[i], Scoring.shotsOnHole(hcp, sis[i])) : null);
 
       // Subtotals
       const fG = gross.slice(0,9).reduce((s,v)=>s+(v||0),0);
@@ -2008,27 +2001,38 @@ const ScoreboardPage = (() => {
       const fS = sbPts.slice(0,9).reduce((s,v)=>s+(v||0),0);
       const bS = sbPts.slice(9).reduce((s,v)=>s+(v||0),0);
 
-      // Gross cells — coloured text
+      // Gross cells — background colors:
+      // Eagle: yellow, Birdie: blue, Par: white, Bogey: black, Double: red, Worse: purple
       const grossCells = gross.map((v, i) => {
-        if (!v) return `<td style="${CELL};color:#ddd">—</td>`;
-        const c = grossCls[i];
-        const fg = c==='eagle'?'#b89600':c==='birdie'?'#1565c0':c==='par'?'#2e7d32':c==='double'?'#c62828':c==='triple'?'#6a1b9a':'#1a2332';
-        const fw = (c && c!=='bogey') ? '700' : '400';
-        return `<td style="${CELL};color:${fg};font-weight:${fw}">${v}</td>`;
+        if (!v) return `<td style="${CELL};color:#94a3b8;background:#ffffff">—</td>`;
+        const diff = v - pars[i];
+        let bg, fg, fw;
+        if (diff <= -2) {
+          // Eagle or better
+          bg = '#facc15'; fg = '#1e293b'; fw = '700';
+        } else if (diff === -1) {
+          // Birdie
+          bg = '#2563eb'; fg = '#ffffff'; fw = '700';
+        } else if (diff === 0) {
+          // Par
+          bg = '#ffffff'; fg = '#1e293b'; fw = '600';
+        } else if (diff === 1) {
+          // Bogey
+          bg = '#1e293b'; fg = '#ffffff'; fw = '600';
+        } else if (diff === 2) {
+          // Double Bogey
+          bg = '#dc2626'; fg = '#ffffff'; fw = '700';
+        } else {
+          // Worse than double (triple+)
+          bg = '#7e22ce'; fg = '#ffffff'; fw = '700';
+        }
+        return `<td style="${CELL};background:${bg};color:${fg};font-weight:${fw}">${v}</td>`;
       });
 
-      // Stableford cells — circle pip
-      const DOT = 'display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;font-size:0.68rem;font-weight:700;line-height:1';
-      const sbCells = sbPts.map((v, i) => {
-        if (v === null || v === 0) return `<td style="${CELL};color:#ddd">—</td>`;
-        const c = sbCls[i];
-        let dot;
-        if (c === 'eagle')       dot = `<span style="${DOT};background:#ffd700;color:#1a2332">${v}</span>`;
-        else if (c === 'birdie') dot = `<span style="${DOT};background:#1565c0;color:#fff">${v}</span>`;
-        else if (c === 'par')    dot = `<span style="${DOT};background:#fff;color:#1a2332;border:1.5px solid #d0d7de">${v}</span>`;
-        else if (c === 'bogey')  dot = `<span style="${DOT};background:#1a1a1a;color:#fff">${v}</span>`;
-        else                     dot = `<span style="color:#ddd;font-size:0.7rem">—</span>`;
-        return `<td style="${CELL}">${dot}</td>`;
+      // Stableford cells — plain numbers, no color formatting
+      const sbCells = sbPts.map((v) => {
+        if (v === null || v === undefined) return `<td style="${CELL};color:#94a3b8;background:#ffffff">—</td>`;
+        return `<td style="${CELL};color:#1e293b;font-weight:600;background:#ffffff">${v}</td>`;
       });
 
       // Helper: build one 9-hole table (front or back)
@@ -2094,7 +2098,7 @@ const ScoreboardPage = (() => {
     overlay.innerHTML = `
       <div style="background:#fff;min-height:100%;max-width:700px;margin:0 auto;padding:16px 12px 40px">
         <!-- Header -->
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:18px;padding-bottom:12px;border-bottom:2px solid #e5e7eb">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;padding-bottom:12px;border-bottom:2px solid #e5e7eb">
           <button onclick="ScoreboardPage.closePlayerDetail()"
             style="background:#f7f8fa;border:1.5px solid #d0d7de;border-radius:8px;padding:8px 14px;font-size:0.9rem;cursor:pointer;font-weight:600">
             ← Back
@@ -2108,6 +2112,17 @@ const ScoreboardPage = (() => {
             </div>
           </div>
         </div>
+
+        <!-- Color Legend -->
+        <div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:8px 12px;margin-bottom:16px;padding:8px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;font-size:0.72rem;color:#475569">
+          <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:3px;background:#facc15;border:1px solid #ca8a04"></span> Eagle</span>
+          <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:3px;background:#2563eb"></span> Birdie</span>
+          <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:3px;background:#fff;border:1px solid #cbd5e1"></span> Par</span>
+          <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:3px;background:#1e293b"></span> Bogey</span>
+          <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:3px;background:#dc2626"></span> Double</span>
+          <span style="display:flex;align-items:center;gap:4px"><span style="width:12px;height:12px;border-radius:3px;background:#7e22ce"></span> Worse</span>
+        </div>
+
         ${daySections.join('')}
       </div>`;
 
