@@ -14,11 +14,13 @@ const ScorecardPage = (() => {
   let _unsub     = null;
   let _unsubP    = null;
   let _unsubS    = null;
-  let _unsubH     = null;   // listener for dayHandicaps
+  let _unsubH    = null;   // listener for dayHandicaps
+  let _unsubT    = null;   // listener for teams
   let _tourTeamBased = true;
   let _teams = {};
   let _currentDay   = 1;
   let _currentGroup = null;
+  let _currentDaySchedule = null;
   let _dayFormat    = 'singles';
   let _pars = Scoring.defaultPars();
   let _sis  = Scoring.defaultSIs();
@@ -32,30 +34,11 @@ const ScorecardPage = (() => {
   let _tourComplete = false;   // true when the active tour is locked
 
   // ── Effective handicap for a player on the current day ───
-  // Returns the explicitly allocated shots for today, or 0 if none set.
-  // Shot allocation is always entered manually — no index fallback.
-  function matchShotAllocations(playerIds = _currentGroup?.playerIds || []) {
-    const stablefordShots = {};
-    playerIds.forEach(pid => {
-      const input = document.getElementById(`sa-${pid}`)?.value;
-      const stored = _dayHcp[pid];
-      stablefordShots[pid] = input !== undefined && input !== ''
-        ? Number(input)
-        : stored !== undefined && stored !== null && stored !== ''
-          ? Number(stored)
-          : Number(_players[pid]?.handicap || 0);
-    });
-    const lowest = Math.min(...playerIds.map(pid => stablefordShots[pid]));
-    return Object.fromEntries(playerIds.map(pid => [
-      pid,
-      Math.round(Math.max(0, (stablefordShots[pid] - lowest) * 0.9))
-    ]));
-  }
-
+  // Uses explicit shot allocation for today if set, otherwise falls back to handicap index.
   function effectiveHcp(pid) {
     const v = _dayHcp[pid];
     if (v !== undefined && v !== null && v !== '') return Number(v);
-    return 0;
+    return Number(_players[pid]?.handicap || 0);
   }
 
   // ── Render shell ─────────────────────────────────────────
@@ -98,6 +81,9 @@ const ScorecardPage = (() => {
             <span class="card-title" id="sc-group-title">Group</span>
             <span class="tag format-badge" id="sc-format-tag"></span>
           </div>
+
+          <!-- Live Mini Leaderboard -->
+          <div id="sc-mini-leaderboard" style="margin:4px 4px 14px;padding:12px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px"></div>
 
           <!-- View Toggle Tab/Buttons -->
           <div id="sc-view-toggle" style="display:flex;gap:8px;margin-bottom:12px;padding:0 4px">
@@ -149,7 +135,13 @@ const ScorecardPage = (() => {
     if (_unsubP) _unsubP();
     _unsubP = DB.on('players', d => {
       _players = d || {};
-      if (_currentGroup) buildGrid();
+      if (_currentGroup) { buildGrid(); } else { renderMiniLeaderboard(); }
+    });
+
+    if (_unsubT) _unsubT();
+    _unsubT = DB.on('teams', d => {
+      _teams = d || {};
+      renderMiniLeaderboard();
     });
 
     onDayChange();
@@ -165,17 +157,18 @@ const ScorecardPage = (() => {
     if (_unsubS) { _unsubS(); _unsubS = null; }
     _unsubS = DB.on(`scores/day${dayNum}`, d => {
       _dayScores = d || {};
-      if (_currentGroup) buildGrid();
+      if (_currentGroup) { buildGrid(); } else { renderMiniLeaderboard(); }
     });
 
     // Subscribe to per-day handicap overrides
     if (_unsubH) { _unsubH(); _unsubH = null; }
     _unsubH = DB.on(`dayHandicaps/day${dayNum}`, d => {
       _dayHcp = d || {};
-      if (_currentGroup) buildGrid();
+      if (_currentGroup) { buildGrid(); } else { renderMiniLeaderboard(); }
     });
 
     DB.get(`schedule/day${dayNum}`).then(async day => {
+      _currentDaySchedule = day || {};
       const tours = await DB.getTours();
       _tourTeamBased = tours[DB.activeTour()]?.teamBased !== false;
       _teams = await DB.get('teams') || {};
@@ -342,11 +335,11 @@ const ScorecardPage = (() => {
         return Scoring.stablefordPoints(gross, _pars[h - 1], shots);
       });
 
-      // Show allocated shots for today (or "—" if not yet set)
-      const hasAlloc   = _dayFormat === 'betterball' || (_dayHcp[pid] !== undefined && _dayHcp[pid] !== null && _dayHcp[pid] !== '');
+      // Show allocated shots for today (or index fallback)
+      const hasAlloc   = (_dayHcp[pid] !== undefined && _dayHcp[pid] !== null && _dayHcp[pid] !== '');
       const hcpDisplay = hasAlloc
         ? `<strong style="color:#1a5c2a">${hcp} shot${hcp !== 1 ? 's' : ''}</strong>`
-        : `<span style="color:#c0392b;font-size:0.7rem">shots not set</span>`;
+        : `<span style="color:#57606a;font-size:0.75rem">${hcp} shot${hcp !== 1 ? 's' : ''}</span>`;
 
       // Output 18 hidden inputs for lost ball counts
       let hiddenLostInputs = '';
@@ -499,16 +492,14 @@ const ScorecardPage = (() => {
     else if (_dayFormat === 'betterball') recalcMatchplayRow(playerIds);
     else recalcContrib(playerIds);
 
-    // Render the matchplay shot panel only for Betterball Matchplay.
+    renderShotAlloc(playerIds);
     if (_dayFormat === 'betterball') {
-      renderMatchplayPanel(playerIds);
       recalcMatchplayRow(playerIds);
-    } else {
-      renderShotAlloc(playerIds);
     }
 
     // Ensure the correct view (18-hole or single-hole) is maintained and rendered
     toggleView(_activeView);
+    renderMiniLeaderboard();
   }
 
   function playerTeamColor(pid) {
@@ -524,12 +515,11 @@ const ScorecardPage = (() => {
     const row = document.getElementById('matchplay-row');
     if (!row || playerIds.length < 4) return;
     const pairA = playerIds.slice(0, 2), pairB = playerIds.slice(2, 4);
-    const matchShots = matchShotAllocations(playerIds);
     let running = 0;
     for (let h = 1; h <= 18; h++) {
       const best = pair => Math.min(...pair.map(pid => {
         const gross = parseInt(document.getElementById(`si-${pid}-${h}`)?.value, 10) || 0;
-        return gross ? gross - Scoring.shotsOnHole(matchShots[pid], _sis[h - 1]) : 999;
+        return gross ? gross - Scoring.shotsOnHole(effectiveHcp(pid), _sis[h - 1]) : 999;
       }));
       const a = best(pairA), b = best(pairB);
       const cell = document.getElementById(`mp-${h}`);
@@ -550,35 +540,32 @@ const ScorecardPage = (() => {
 
   function recalcMatchplayDetailRows(playerIds) {
     if (playerIds.length < 4) return;
-    const matchShots = matchShotAllocations(playerIds);
     const pairA = playerIds.slice(0, 2), pairB = playerIds.slice(2, 4);
 
-    // Net score using match shot allocation — same system as pts display and summary row
     const netScore = (pid, h) => {
       const gross = parseInt(document.getElementById(`si-${pid}-${h}`)?.value, 10) || 0;
       if (!gross) return 999;
-      return gross - Scoring.shotsOnHole(matchShots[pid], _sis[h - 1]);
+      return gross - Scoring.shotsOnHole(effectiveHcp(pid), _sis[h - 1]);
     };
 
-    // Determine pair winner per hole: 'A', 'B', or null (halved / no scores)
     const holeWinner = h => {
       const bestA = Math.min(...pairA.map(p => netScore(p, h)));
       const bestB = Math.min(...pairB.map(p => netScore(p, h)));
       if (bestA === 999 && bestB === 999) return null;
       if (bestA < bestB) return 'A';
       if (bestB < bestA) return 'B';
-      return null; // halved
+      return null;
     };
 
     playerIds.forEach(pid => {
-      const mShots   = matchShots[pid];
+      const hcp       = effectiveHcp(pid);
       const teamColor = playerTeamColor(pid);
-      const inPairA  = pairA.includes(pid);
-      const pairKey  = inPairA ? 'A' : 'B';
+      const inPairA   = pairA.includes(pid);
+      const pairKey   = inPairA ? 'A' : 'B';
 
       const nameCell = document.getElementById(`mpd-name-${pid}`);
       if (nameCell) {
-        nameCell.innerHTML = `<span style="font-weight:700">${esc(_players[pid]?.name || pid)}</span><br><span style="font-size:0.65rem;opacity:0.85">${mShots} match shot${mShots !== 1 ? 's' : ''}</span>`;
+        nameCell.innerHTML = `<span style="font-weight:700">${esc(_players[pid]?.name || pid)}</span><br><span style="font-size:0.65rem;opacity:0.85">${hcp} shot${hcp !== 1 ? 's' : ''}</span>`;
       }
 
       let outPts = 0, inPts = 0;
@@ -589,13 +576,11 @@ const ScorecardPage = (() => {
 
         if (!gross) { cell.textContent = ''; cell.style.removeProperty('background'); cell.style.removeProperty('color'); continue; }
 
-        const shots = Scoring.shotsOnHole(mShots, _sis[h - 1]);
+        const shots = Scoring.shotsOnHole(hcp, _sis[h - 1]);
         const pts   = Scoring.stablefordPoints(gross, _pars[h - 1], shots);
         cell.textContent = pts;
         if (h <= 9) outPts += pts; else inPts += pts;
 
-        // Highlight cell if: this player's pair wins the hole AND this player's
-        // net score equals their pair's best (i.e. they are the contributing score)
         const winner = holeWinner(h);
         const pairBest = Math.min(...(inPairA ? pairA : pairB).map(p => netScore(p, h)));
         const isContributor = winner === pairKey && netScore(pid, h) === pairBest;
@@ -616,23 +601,6 @@ const ScorecardPage = (() => {
     });
   }
 
-  function renderMatchplayPanel(playerIds) {
-    const title = document.querySelector('#shot-alloc-card .card-title');
-    const note = document.querySelector('#shot-alloc-card .text-muted');
-    if (title) title.innerHTML = '⚔️ Betterball Matchplay Shots — Day <span id="sa-day-label">' + _currentDay + '</span>';
-    if (note) note.textContent = 'Stableford shots are entered in the first column. Matchplay shots are calculated from the lowest handicap in the four-player group.';
-    renderShotAlloc(playerIds);
-    updateMatchplayShotInputs(playerIds);
-  }
-
-  function updateMatchplayShotInputs(playerIds) {
-    const matchShots = matchShotAllocations(playerIds);
-    playerIds.forEach(pid => {
-      const input = document.getElementById(`match-sa-${pid}`);
-      if (input) input.value = matchShots[pid];
-    });
-  }
-
   // ── Shot Allocation panel ────────────────────────────────
   function renderShotAlloc(playerIds) {
     const el = document.getElementById('shot-alloc-rows');
@@ -642,20 +610,19 @@ const ScorecardPage = (() => {
       const p      = _players[pid];
       const stored = _dayHcp[pid];
       const hasVal = stored !== undefined && stored !== null && stored !== '';
-      const matchShots = null;
       return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0f0f0">
         <div style="flex:1;min-width:0">
           <div style="font-weight:600;font-size:0.9rem">${esc(p?.name || pid)}</div>
+          <div style="font-size:0.75rem;color:#57606a">Handicap Index: ${p?.handicap ?? '—'}</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-          <label style="font-size:0.72rem;color:#57606a;white-space:nowrap">Stableford shots</label>
+          <label style="font-size:0.72rem;color:#57606a;white-space:nowrap">Day shots</label>
           <input type="text" inputmode="numeric" pattern="[0-9]*" id="sa-${pid}"
             value="${hasVal ? stored : ''}"
-            placeholder="—"
+            placeholder="${p?.handicap ?? '—'}"
             style="width:64px;padding:7px 8px;border:1.5px solid ${hasVal ? '#1a5c2a' : '#d0d7de'};border-radius:7px;font-size:1rem;text-align:center;font-weight:700;color:${hasVal ? '#1a5c2a' : '#1a2332'};-webkit-appearance:none;appearance:none"
             oninput="this.value=this.value.replace(/[^0-9]/g,'');this.style.borderColor=this.value!==''?'#1a5c2a':'#d0d7de';this.style.color=this.value!==''?'#1a5c2a':'#1a2332'"
           />
-          ${_dayFormat === 'betterball' ? `<label style="font-size:0.72rem;color:#57606a;white-space:nowrap">Match shots</label><input type="text" id="match-sa-${pid}" value="${matchShots}" disabled style="width:54px;padding:7px 8px;border:1.5px solid #6b21a8;border-radius:7px;font-size:1rem;text-align:center;font-weight:700;color:#6b21a8;background:#f3e8ff" />` : ''}
         </div>
       </div>`;
     }).join('') + (playerIds.length === 0 ? '<p class="text-muted">No players in this group.</p>' : '');
@@ -721,9 +688,9 @@ const ScorecardPage = (() => {
     recalcPlayer(pid);
     if (_dayFormat === 'pairs') recalcPairs(_currentGroup?.playerIds || []);
     if (_dayFormat === 'betterball') {
-      updateMatchplayShotInputs(_currentGroup?.playerIds || []);
       recalcMatchplayRow(_currentGroup?.playerIds || []);
     } else recalcContrib(_currentGroup?.playerIds || []);
+    renderMiniLeaderboard();
   }
 
   // ── Recalc player totals ─────────────────────────────────
@@ -961,6 +928,7 @@ const ScorecardPage = (() => {
     if (_unsubP) { _unsubP(); _unsubP = null; }
     if (_unsubS) { _unsubS(); _unsubS = null; }
     if (_unsubH) { _unsubH(); _unsubH = null; }
+    if (_unsubT) { _unsubT(); _unsubT = null; }
     _activeView  = 'table';
     _currentHole = 1;
   }
@@ -1214,6 +1182,256 @@ const ScorecardPage = (() => {
     }
   }
 
+  // ── Small Live Leaderboard with Thru Tracking ────────────
+  function firstName(fullName) {
+    return (fullName || '').split(' ')[0] || fullName || '';
+  }
+
+  function renderMiniLeaderboard() {
+    const el = document.getElementById('sc-mini-leaderboard');
+    if (!el) return;
+
+    const format  = _dayFormat || 'singles';
+    const dayPars = _pars || Scoring.defaultPars();
+    const daySis  = _sis  || Scoring.defaultSIs();
+
+    // Helper: get player's live gross score on hole h (combining DOM input and saved DB score)
+    const getGross = (pid, h) => {
+      const inp = document.getElementById(`si-${pid}-${h}`);
+      if (inp && inp.value !== '') return parseInt(inp.value, 10) || 0;
+      return _dayScores[pid]?.[`h${h}`] || 0;
+    };
+
+    // Helper: get player's stableford points on hole h
+    const getHolePts = (pid, h) => {
+      const g = getGross(pid, h);
+      if (!g) return 0;
+      const hcp = effectiveHcp(pid);
+      return Scoring.stablefordPoints(g, dayPars[h - 1], Scoring.shotsOnHole(hcp, daySis[h - 1]));
+    };
+
+    // Helper: player's thru count
+    const getPlayerThru = pid => {
+      let count = 0;
+      for (let h = 1; h <= 18; h++) {
+        if (getGross(pid, h) > 0) count++;
+      }
+      return count;
+    };
+
+    // Helper: player's total stableford today
+    const getPlayerTotal = pid => {
+      let tot = 0;
+      for (let h = 1; h <= 18; h++) {
+        tot += getHolePts(pid, h);
+      }
+      return tot;
+    };
+
+    const thruLabel = thru => {
+      if (thru === 0) return 'Not started';
+      if (thru >= 18) return 'Thru 18 (F)';
+      return `Thru ${thru} hole${thru !== 1 ? 's' : ''}`;
+    };
+
+    const teamEntries = Object.entries(_teams);
+    let items = [];
+    let title = `📊 Day ${_currentDay} Live Leaderboard`;
+
+    if (format === 'team') {
+      title = `🏆 Team Standings — Day ${_currentDay}`;
+      items = teamEntries.map(([tid, team]) => {
+        const memberIds = team.playerIds || [];
+        let score = 0;
+        let maxThru = 0;
+        for (let h = 1; h <= 18; h++) {
+          const par = dayPars[h - 1];
+          const count = par === 5 ? 3 : 2;
+          const hPts = memberIds.map(pid => getHolePts(pid, h)).sort((a, b) => b - a);
+          let holeTot = 0;
+          for (let k = 0; k < count; k++) holeTot += hPts[k] || 0;
+          score += holeTot;
+          const playedCount = memberIds.filter(pid => getGross(pid, h) > 0).length;
+          if (playedCount > 0) maxThru = Math.max(maxThru, h);
+        }
+        return {
+          name: team.name,
+          color: team.color || '#1a5c2a',
+          score,
+          thru: maxThru,
+          thruText: thruLabel(maxThru)
+        };
+      }).sort((a, b) => b.score - a.score);
+
+    } else if (format === 'pairs') {
+      title = `🏆 Pairs Standings — Day ${_currentDay}`;
+      const allGroupings = _currentDaySchedule?.groupings || [];
+      const sorted = Object.entries(_players).sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99));
+      const pairList = [];
+      allGroupings.forEach(g => {
+        const ids = Array.isArray(g.playerIds)
+          ? g.playerIds
+          : (Array.isArray(g.slots) ? g.slots.map(s => sorted[s - 1]?.[0]).filter(Boolean) : []);
+        for (let i = 0; i + 1 < ids.length; i += 2) {
+          pairList.push([ids[i], ids[i + 1]]);
+        }
+      });
+      if (pairList.length === 0 && _currentGroup?.playerIds?.length >= 2) {
+        for (let i = 0; i + 1 < _currentGroup.playerIds.length; i += 2) {
+          pairList.push([_currentGroup.playerIds[i], _currentGroup.playerIds[i + 1]]);
+        }
+      }
+
+      items = pairList.map(([pidA, pidB]) => {
+        let score = 0;
+        let maxThru = 0;
+        for (let h = 1; h <= 18; h++) {
+          const sA = getHolePts(pidA, h);
+          const sB = getHolePts(pidB, h);
+          score += Math.max(sA, sB);
+          if (getGross(pidA, h) > 0 || getGross(pidB, h) > 0) maxThru = Math.max(maxThru, h);
+        }
+        const teamA = Object.values(_teams).find(t => (t.playerIds || []).includes(pidA));
+        const nameA = firstName(_players[pidA]?.name) || pidA;
+        const nameB = firstName(_players[pidB]?.name) || pidB;
+        return {
+          name: `${nameA} & ${nameB}`,
+          color: teamA?.color || '#1a5c2a',
+          score,
+          thru: maxThru,
+          thruText: thruLabel(maxThru)
+        };
+      }).sort((a, b) => b.score - a.score);
+
+    } else if (format === 'betterball') {
+      title = `⚔️ Matchplay Standings — Day ${_currentDay}`;
+      const allGroupings = _currentDaySchedule?.groupings || [];
+      const sorted = Object.entries(_players).sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99));
+      const matches = [];
+      allGroupings.forEach(g => {
+        const ids = Array.isArray(g.playerIds)
+          ? g.playerIds
+          : (Array.isArray(g.slots) ? g.slots.map(s => sorted[s - 1]?.[0]).filter(Boolean) : []);
+        for (let i = 0; i + 3 < ids.length; i += 4) {
+          matches.push([[ids[i], ids[i + 1]], [ids[i + 2], ids[i + 3]]]);
+        }
+      });
+      if (matches.length === 0 && _currentGroup?.playerIds?.length >= 4) {
+        matches.push([_currentGroup.playerIds.slice(0, 2), _currentGroup.playerIds.slice(2, 4)]);
+      }
+
+      items = matches.map(([pairA, pairB]) => {
+        let running = 0;
+        let maxThru = 0;
+        let ptsA = 0, ptsB = 0;
+        for (let h = 1; h <= 18; h++) {
+          const net = pid => {
+            const g = getGross(pid, h);
+            if (!g) return 999;
+            return g - Scoring.shotsOnHole(effectiveHcp(pid), daySis[h - 1]);
+          };
+          const bestA = Math.min(...pairA.map(net));
+          const bestB = Math.min(...pairB.map(net));
+          if (bestA < 999 || bestB < 999) maxThru = Math.max(maxThru, h);
+          if (bestA !== 999 && bestB !== 999) {
+            if (bestA < bestB) running++;
+            else if (bestB < bestA) running--;
+          }
+          const sA = Math.max(...pairA.map(p => getHolePts(p, h)));
+          const sB = Math.max(...pairB.map(p => getHolePts(p, h)));
+          ptsA += sA;
+          ptsB += sB;
+        }
+        const nameA = pairA.map(pid => firstName(_players[pid]?.name) || pid).join(' & ');
+        const nameB = pairB.map(pid => firstName(_players[pid]?.name) || pid).join(' & ');
+        const teamA = Object.values(_teams).find(t => (t.playerIds || []).includes(pairA[0]));
+        const teamB = Object.values(_teams).find(t => (t.playerIds || []).includes(pairB[0]));
+        const status = maxThru === 0 ? 'Not played' : running === 0 ? 'A/S' : running > 0 ? `${teamA?.name || 'Pair A'} ${running}UP` : `${teamB?.name || 'Pair B'} ${Math.abs(running)}UP`;
+        return {
+          name: `${nameA} (${ptsA} pts) vs ${nameB} (${ptsB} pts)`,
+          color: running > 0 ? (teamA?.color || '#1a5c2a') : running < 0 ? (teamB?.color || '#cc0000') : '#64748b',
+          matchStatus: status,
+          thru: maxThru,
+          thruText: thruLabel(maxThru),
+          isMatch: true
+        };
+      });
+
+    } else {
+      // Singles / Singles-Team
+      if (_tourTeamBased && teamEntries.length > 0) {
+        title = `🏆 Team Standings — Day ${_currentDay}`;
+        items = teamEntries.map(([tid, team]) => {
+          const memberIds = team.playerIds || [];
+          let score = 0;
+          let maxThru = 0;
+          memberIds.forEach(pid => {
+            score += getPlayerTotal(pid);
+            maxThru = Math.max(maxThru, getPlayerThru(pid));
+          });
+          return {
+            name: team.name,
+            color: team.color || '#1a5c2a',
+            score,
+            thru: maxThru,
+            thruText: thruLabel(maxThru)
+          };
+        }).sort((a, b) => b.score - a.score);
+      } else {
+        title = `👤 Individual Standings — Day ${_currentDay}`;
+        items = Object.entries(_players).map(([pid, p]) => {
+          const score = getPlayerTotal(pid);
+          const thru = getPlayerThru(pid);
+          const team = Object.values(_teams).find(t => (t.playerIds || []).includes(pid));
+          return {
+            name: firstName(p.name) || pid,
+            color: team?.color || '#1a5c2a',
+            score,
+            thru,
+            thruText: thruLabel(thru)
+          };
+        }).filter(p => p.thru > 0 || p.score > 0).sort((a, b) => b.score - a.score);
+      }
+    }
+
+    const medals = ['🥇', '🥈', '🥉'];
+    const rowsHtml = items.map((item, idx) => {
+      const posLabel = medals[idx] || `${idx + 1}`;
+      if (item.isMatch) {
+        return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:#fff;border-radius:8px;border:1px solid #e2e8f0">
+          <div style="flex:1;min-width:0;padding-right:8px">
+            <div style="font-weight:700;font-size:0.88rem;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(item.name)}</div>
+            <div style="font-size:0.75rem;color:#64748b;margin-top:2px">${item.thruText}</div>
+          </div>
+          <div style="font-weight:800;font-size:0.95rem;color:${item.color};white-space:nowrap">${esc(item.matchStatus)}</div>
+        </div>`;
+      }
+      return `<div style="display:flex;align-items:center;justify-content:space-between;padding:8px 10px;background:#fff;border-radius:8px;border:1px solid #e2e8f0">
+        <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;padding-right:8px">
+          <span style="font-size:0.85rem;font-weight:700;width:22px;text-align:center;flex-shrink:0">${posLabel}</span>
+          <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${item.color};flex-shrink:0"></span>
+          <div style="min-width:0;overflow:hidden">
+            <span style="font-weight:700;font-size:0.88rem;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">${esc(item.name)}</span>
+            <span style="font-size:0.72rem;color:#64748b;font-weight:600">${item.thruText}</span>
+          </div>
+        </div>
+        <div style="text-align:right;flex-shrink:0">
+          <strong style="font-size:1.05rem;color:#1a5c2a;font-weight:800">${item.score} <span style="font-size:0.75rem;font-weight:600">pts</span></strong>
+        </div>
+      </div>`;
+    }).join('') || '<p class="text-muted" style="font-size:0.82rem;margin:4px 0">No scores recorded yet for this day.</p>';
+
+    el.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <span style="font-weight:800;font-size:0.88rem;color:#0f172a">${title}</span>
+        <span class="tag" style="background:#e0f2fe;color:#0369a1;font-size:0.7rem;padding:2px 8px;font-weight:700">● Live Thru Tracking</span>
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        ${rowsHtml}
+      </div>
+    `;
+  }
+
   return {
     render,
     destroy,
@@ -1225,6 +1443,7 @@ const ScorecardPage = (() => {
     changeSingleHole,
     adjustSingleHoleScore,
     adjustSingleHoleLost,
-    saveFromSingleHole
+    saveFromSingleHole,
+    renderMiniLeaderboard
   };
 })();

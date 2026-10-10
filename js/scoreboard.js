@@ -113,33 +113,24 @@ const ScoreboardPage = (() => {
     return (fullName || '').split(' ')[0] || fullName || '';
   }
 
+  function playerHoleScores(sc) {
+    return Array.from({length: 18}, (_, i) => sc?.[`h${i+1}`] || 0);
+  }
+
+  function playerStablefordTotal(sc, pars, sis, hcp) {
+    if (!sc) return 0;
+    const scores = playerHoleScores(sc);
+    const hasScores = scores.some(s => s > 0);
+    if (!hasScores) return sc.stableford ?? 0;
+    return Scoring.totalStableford(scores, pars, sis, hcp);
+  }
+
   // Effective handicap for a player on a specific day:
   // uses the day's shot allocation if set, otherwise falls back to player's index handicap.
   function effectiveHcp(pid, dayKey) {
-    if (_schedule[dayKey]?.format === 'betterball') {
-      const sorted = Object.entries(_players)
-        .sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99));
-      const group = (_schedule[dayKey]?.groupings || []).find(g => {
-        const ids = Array.isArray(g.playerIds)
-          ? g.playerIds
-          : (Array.isArray(g.slots) ? g.slots.map(slot => sorted[slot - 1]?.[0]).filter(Boolean) : []);
-        return ids.includes(pid);
-      });
-      const groupIds = Array.isArray(group?.playerIds)
-        ? group.playerIds
-        : (Array.isArray(group?.slots) ? group.slots.map(slot => sorted[slot - 1]?.[0]).filter(Boolean) : [pid]);
-      const hcpFor = id => {
-        const dayAlloc = _dayHcps[dayKey]?.[id];
-        return (dayAlloc !== undefined && dayAlloc !== null && dayAlloc !== '')
-          ? Number(dayAlloc)
-          : Number(_players[id]?.handicap || 0);
-      };
-      const lowest = Math.min(...groupIds.map(id => hcpFor(id)));
-      return Math.round(Math.max(0, (hcpFor(pid) - lowest) * 0.9));
-    }
     const alloc = _dayHcps[dayKey]?.[pid];
     if (alloc !== undefined && alloc !== null && alloc !== '') return Number(alloc);
-    return _players[pid]?.handicap || 0;
+    return Number(_players[pid]?.handicap || 0);
   }
 
   function playerTeam(pid) {
@@ -183,7 +174,8 @@ const ScoreboardPage = (() => {
     let pts = 0;
 
     if (format === 'betterball') {
-      const pairs = dayPairs(dayKey);
+      const memberSet = new Set(memberIds);
+      const pairs = dayPairs(dayKey).filter(([a, b]) => memberSet.has(a) && memberSet.has(b));
       pairs.forEach(([a, b]) => {
         for (let hole = 1; hole <= 18; hole++) {
           const i = hole - 1;
@@ -194,8 +186,10 @@ const ScoreboardPage = (() => {
         }
       });
     } else if (format === 'singles' || format === 'singles-team') {
-      // Individual stableford values were saved with the correct day handicap — use them directly
-      memberIds.forEach(pid => { pts += dayScores[pid]?.stableford || 0; });
+      memberIds.forEach(pid => {
+        const sc = dayScores[pid];
+        if (sc) pts += playerStablefordTotal(sc, pars, sis, effectiveHcp(pid, dayKey));
+      });
 
     } else if (format === 'pairs') {
       // Pairs come from schedule groupings (consecutive within each group), not team player order.
@@ -317,9 +311,10 @@ const ScoreboardPage = (() => {
       const ranked = Object.entries(_players)
         .map(([pid]) => {
           const sc = dayScores[pid] || {};
-          const total = sc.stableford || 0;
-          const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
-          const holePts = Scoring.holePoints(scores, pars, sis, effectiveHcp(pid, dayKey));
+          const hcp = effectiveHcp(pid, dayKey);
+          const total = playerStablefordTotal(sc, pars, sis, hcp);
+          const scores = playerHoleScores(sc);
+          const holePts = total > 0 ? Scoring.holePoints(scores, pars, sis, hcp) : null;
           return { pid, total, holePts };
         })
         .filter(e => e.total > 0)
@@ -676,13 +671,15 @@ const ScoreboardPage = (() => {
       for (let d = 1; d <= DAYS; d++) {
         const dayKey       = `day${d}`;
         const sc           = (_allScores[dayKey] || {})[pid];
-        const pts          = sc?.stableford ?? null;
+        const { pars, sis } = dayParsAndSIs(dayKey);
+        const hcp          = effectiveHcp(pid, dayKey);
+        const scores       = playerHoleScores(sc);
+        const hasScores    = scores.some(s => s > 0) || sc?.stableford != null;
+        const pts          = hasScores ? playerStablefordTotal(sc, pars, sis, hcp) : null;
         dayPts[dayKey]     = pts;
         total             += pts || 0;
         if (pts) {
-          const { pars, sis } = dayParsAndSIs(dayKey);
-          const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
-          dayHolePts[dayKey] = Scoring.holePoints(scores, pars, sis, p.handicap || 0);
+          dayHolePts[dayKey] = Scoring.holePoints(scores, pars, sis, hcp);
         }
       }
       // Use the last day with scores as the countback reference
@@ -1485,9 +1482,11 @@ const ScoreboardPage = (() => {
       const members = (team.playerIds || []).map(pid => {
         const p      = _players[pid];
         const sc     = dayScores[pid] || {};
-        const total  = sc.stableford ?? null;
-        const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
-        const holePts = total ? Scoring.holePoints(scores, pars, sis, p?.handicap || 0) : null;
+        const scores = playerHoleScores(sc);
+        const hasScores = scores.some(s => s > 0) || sc.stableford != null;
+        const hcp    = effectiveHcp(pid, dayKey);
+        const total  = hasScores ? playerStablefordTotal(sc, pars, sis, hcp) : null;
+        const holePts = total !== null ? Scoring.holePoints(scores, pars, sis, hcp) : null;
         return { name: firstName(p?.name) || pid, total, pts: total, holePts };
       }).filter(m => m.total !== null && m.total > 0).sort((a, b) => Scoring.countbackSort(a, b));
 
@@ -1541,10 +1540,12 @@ const ScoreboardPage = (() => {
     const allEntries = Object.entries(_players)
       .map(([pid, p]) => {
         const sc    = dayScores[pid] || {};
-        const total = sc.stableford ?? null;
+        const scores = playerHoleScores(sc);
+        const hasScores = scores.some(s => s > 0) || sc.stableford != null;
+        const hcp    = effectiveHcp(pid, dayKey);
+        const total  = hasScores ? playerStablefordTotal(sc, pars, sis, hcp) : null;
         const t     = playerTeam(pid);
-        const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
-        const holePts = total ? Scoring.holePoints(scores, pars, sis, p.handicap || 0) : null;
+        const holePts = total !== null ? Scoring.holePoints(scores, pars, sis, hcp) : null;
         return { pid, name: firstName(p.name), total, holePts, teamColor: t?.color, teamName: t?.name };
       })
       .filter(e => e.total !== null && e.total > 0)
@@ -1727,9 +1728,10 @@ const ScoreboardPage = (() => {
       const { pars: singPars, sis: singSis } = dayParsAndSIs(dayKey);
       const playerStandings = Object.entries(_players).map(([pid, p]) => {
         const sc = dayScores[pid] || {};
-        const total = sc.stableford || 0;
-        const scores = Array.from({length: 18}, (_, i) => sc[`h${i+1}`] || 0);
-        const holePts = total ? Scoring.holePoints(scores, singPars, singSis, effectiveHcp(pid, dayKey)) : null;
+        const hcp = effectiveHcp(pid, dayKey);
+        const total = playerStablefordTotal(sc, singPars, singSis, hcp);
+        const scores = playerHoleScores(sc);
+        const holePts = total > 0 ? Scoring.holePoints(scores, singPars, singSis, hcp) : null;
         const team = playerTeam(pid);
         return { pid, name: firstName(p.name), total, holePts, teamColor: team?.color, teamName: team?.name };
       }).filter(p => p.total > 0).sort((a, b) => Scoring.countbackSort(a, b));
@@ -1835,17 +1837,18 @@ const ScoreboardPage = (() => {
       <!-- Team leaderboard (team day only) -->
       ${teamLeaderboardHtml}
 
-      <!-- Team scoring zones -->
+      <!-- Team scoring zones — only for team/pairs formats -->
+      ${(dayFmt === 'team' || dayFmt === 'pairs') ? `
       <div class="card">
         <div class="card-header" style="margin-bottom:12px">
           <span class="card-title">🏆 Team Scoring Zones</span>
           <span class="text-muted" style="font-size:0.78rem">Ranked by Stableford</span>
         </div>
         ${teamBlocks}
-      </div>
+      </div>` : ''}
 
-      <!-- Full day ranking -->
-      ${allEntries.length > 0 ? `
+      <!-- Full day ranking — only for team/pairs formats (singles already shown in leaderboard above) -->
+      ${(dayFmt === 'team' || dayFmt === 'pairs') && allEntries.length > 0 ? `
       <div class="card" style="overflow-x:auto">
         <div class="card-header" style="margin-bottom:10px">
           <span class="card-title">👤 Individual Day Ranking</span>
@@ -1860,14 +1863,15 @@ const ScoreboardPage = (() => {
         </table>
       </div>` : ''}
 
-      <!-- Nearest the Pin -->
+      <!-- Nearest the Pin — only if enabled in tour settings -->
+      ${(_tourSettings.scoringOptions?.ntp || _tourSettings.tabs?.ntp) ? `
       <div class="card">
         <div class="card-header" style="margin-bottom:10px">
           <span class="card-title">📍 Nearest the Pin</span>
           <span class="text-muted" style="font-size:0.78rem">${par3Holes.length} par 3${par3Holes.length !== 1 ? 's' : ''}</span>
         </div>
         ${ntpHtml}
-      </div>`;
+      </div>` : ''}`;
   }
 
   // ── Lost Balls Tab ───────────────────────────────────────

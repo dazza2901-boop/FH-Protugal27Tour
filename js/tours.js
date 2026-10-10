@@ -69,8 +69,11 @@ const ToursPage = (() => {
         </div></div><button type="button" class="btn-primary" id="tour-save" onclick="ToursPage.saveSettings()">Save Settings</button>
       </div>
       <div class="card"><div class="card-title">Create New Tour</div><p class="text-muted mt-8">Create a separate tour and configure it independently.</p><button class="btn-secondary mt-8" id="new-tour-btn">+ New Tour</button></div>
+      <div class="card" id="delete-tour-card"><div class="card-title" style="color:#b91c1c">🗑️ Delete Tour</div><p class="text-muted mt-8">Permanently delete this tour and all of its scores, schedule, and settings.</p><button class="btn-secondary mt-8" id="delete-tour-btn" style="color:#b91c1c;border-color:#fca5a5" onclick="ToursPage.deleteTour()">Delete Active Tour</button></div>
     </div>`;
     document.getElementById('new-tour-btn').onclick = showCreateForm;
+    const deleteCard = document.getElementById('delete-tour-card');
+    if (deleteCard && DB.activeTour() === 'cascais') deleteCard.classList.add('hidden');
     try {
       _tours = await DB.getTours();
     } catch (error) {
@@ -155,7 +158,18 @@ const ToursPage = (() => {
     }
   }
 
+  async function deleteTour() {
+    const tourId = DB.activeTour();
+    if (!tourId || tourId === 'cascais') { App.toast('Default tour cannot be deleted'); return; }
+    const tour = _tours[tourId] || {};
+    const confirmed = window.confirm(`Are you sure you want to delete "${tour.name || tourId}"?\nThis cannot be undone.`);
+    if (!confirmed) return;
+    await DB.deleteTour(tourId);
+    App.toast('Tour deleted ✓');
+    window.location.reload();
+  }
+
   function select(id) { DB.selectTour(id); window.location.reload(); }
   function destroy() { if (_unsub) { _unsub(); _unsub = null; } }
-  return { render, renderAdmin, destroy, select, saveSettings };
+  return { render, renderAdmin, destroy, select, saveSettings, deleteTour };
 })();
