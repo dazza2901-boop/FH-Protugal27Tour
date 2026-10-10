@@ -876,8 +876,11 @@ const ScorecardPage = (() => {
         data.stableford = Scoring.totalStableford(scores, _pars, _sis, hcp);
         data.lostBalls = losts.reduce((a, b) => a + b, 0);
         await DB.set(`${dayKey}/${pid}`, data);
+        if (!_dayScores[pid]) _dayScores[pid] = {};
+        Object.assign(_dayScores[pid], data);
         saved++;
       }
+      renderMiniLeaderboard();
       if (!silent) {
         App.toast(`Saved scores for ${saved} player${saved !== 1 ? 's' : ''} ✓`);
       }
@@ -1093,6 +1096,7 @@ const ScorecardPage = (() => {
       _currentHole = Math.max(1, Math.min(18, _currentHole + delta));
     }
     renderSingleHole();
+    renderMiniLeaderboard();
   }
 
   function adjustSingleHoleScore(pid, delta) {
@@ -1144,6 +1148,8 @@ const ScorecardPage = (() => {
       ptsDisplay.style.background = pts === 5 ? '#fff3e0' : '#edf5f0';
       ptsDisplay.style.borderColor = pts === 5 ? '#ff6b00' : '#d4edda';
     }
+
+    renderMiniLeaderboard();
   }
 
   function adjustSingleHoleLost(pid, delta) {
@@ -1174,6 +1180,7 @@ const ScorecardPage = (() => {
     }
     try {
       await saveAllScores();
+      renderMiniLeaderboard();
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -1198,7 +1205,10 @@ const ScorecardPage = (() => {
     // Helper: get player's live gross score on hole h (combining DOM input and saved DB score)
     const getGross = (pid, h) => {
       const inp = document.getElementById(`si-${pid}-${h}`);
-      if (inp && inp.value !== '') return parseInt(inp.value, 10) || 0;
+      if (inp) {
+        const val = inp.value.trim();
+        return val !== '' ? (parseInt(val, 10) || 0) : 0;
+      }
       return _dayScores[pid]?.[`h${h}`] || 0;
     };
 
@@ -1238,30 +1248,63 @@ const ScorecardPage = (() => {
     let items = [];
     let title = `📊 Day ${_currentDay} Live Leaderboard`;
 
-    if (format === 'team') {
-      title = `🏆 Team Standings — Day ${_currentDay}`;
-      items = teamEntries.map(([tid, team]) => {
-        const memberIds = team.playerIds || [];
-        let score = 0;
-        let maxThru = 0;
-        for (let h = 1; h <= 18; h++) {
-          const par = dayPars[h - 1];
-          const count = par === 5 ? 3 : 2;
-          const hPts = memberIds.map(pid => getHolePts(pid, h)).sort((a, b) => b - a);
-          let holeTot = 0;
-          for (let k = 0; k < count; k++) holeTot += hPts[k] || 0;
-          score += holeTot;
-          const playedCount = memberIds.filter(pid => getGross(pid, h) > 0).length;
-          if (playedCount > 0) maxThru = Math.max(maxThru, h);
-        }
-        return {
-          name: team.name,
-          color: team.color || '#1a5c2a',
-          score,
-          thru: maxThru,
-          thruText: thruLabel(maxThru)
-        };
-      }).sort((a, b) => b.score - a.score);
+    if (format === 'team' || format === 'singles-team') {
+      const allGroupings = _currentDaySchedule?.groupings || [];
+      const sorted = Object.entries(_players).sort((a, b) => (a[1].handicap ?? 99) - (b[1].handicap ?? 99));
+
+      if (format === 'singles-team' && allGroupings.length > 0) {
+        title = `👥 Group Team Standings — Day ${_currentDay}`;
+        items = allGroupings.map((g, gi) => {
+          const memberIds = Array.isArray(g.playerIds)
+            ? g.playerIds
+            : (Array.isArray(g.slots) ? g.slots.map(s => sorted[s - 1]?.[0]).filter(Boolean) : []);
+          let score = 0;
+          let maxThru = 0;
+          for (let h = 1; h <= 18; h++) {
+            const par = dayPars[h - 1];
+            const count = par === 5 ? 3 : 2;
+            const hPts = memberIds.map(pid => getHolePts(pid, h)).sort((a, b) => b - a);
+            let holeTot = 0;
+            for (let k = 0; k < count; k++) holeTot += hPts[k] || 0;
+            score += holeTot;
+            const playedCount = memberIds.filter(pid => getGross(pid, h) > 0).length;
+            if (playedCount > 0) maxThru = Math.max(maxThru, h);
+          }
+          const names = memberIds.map(pid => firstName(_players[pid]?.name) || pid).filter(Boolean).join(', ');
+          const team = memberIds.length > 0 ? Object.values(_teams).find(t => (t.playerIds || []).includes(memberIds[0])) : null;
+          return {
+            name: `Group ${gi + 1}${names ? ` (${names})` : ''}`,
+            color: team?.color || '#1a5c2a',
+            score,
+            thru: maxThru,
+            thruText: thruLabel(maxThru)
+          };
+        }).sort((a, b) => b.score - a.score);
+      } else {
+        title = `🏆 Team Standings — Day ${_currentDay}`;
+        items = teamEntries.map(([tid, team]) => {
+          const memberIds = team.playerIds || [];
+          let score = 0;
+          let maxThru = 0;
+          for (let h = 1; h <= 18; h++) {
+            const par = dayPars[h - 1];
+            const count = par === 5 ? 3 : 2;
+            const hPts = memberIds.map(pid => getHolePts(pid, h)).sort((a, b) => b - a);
+            let holeTot = 0;
+            for (let k = 0; k < count; k++) holeTot += hPts[k] || 0;
+            score += holeTot;
+            const playedCount = memberIds.filter(pid => getGross(pid, h) > 0).length;
+            if (playedCount > 0) maxThru = Math.max(maxThru, h);
+          }
+          return {
+            name: team.name,
+            color: team.color || '#1a5c2a',
+            score,
+            thru: maxThru,
+            thruText: thruLabel(maxThru)
+          };
+        }).sort((a, b) => b.score - a.score);
+      }
 
     } else if (format === 'pairs') {
       title = `🏆 Pairs Standings — Day ${_currentDay}`;
@@ -1358,7 +1401,7 @@ const ScorecardPage = (() => {
       });
 
     } else {
-      // Singles / Singles-Team
+      // Singles (Pure Individual Day)
       if (_tourTeamBased && teamEntries.length > 0) {
         title = `🏆 Team Standings — Day ${_currentDay}`;
         items = teamEntries.map(([tid, team]) => {
